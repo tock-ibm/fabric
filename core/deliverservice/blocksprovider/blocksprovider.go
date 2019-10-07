@@ -21,6 +21,8 @@ import (
 	"github.com/hyperledger/fabric/protos/orderer"
 )
 
+//go:generate mockery -dir . -name LedgerInfo -case underscore -output ../mocks/
+
 // LedgerInfo an adapter to provide the interface to query
 // the ledger committer for current ledger height
 type LedgerInfo interface {
