@@ -327,6 +327,9 @@ peer:
         # It sets the delivery service maximal delay between consecutive retries
         reConnectBackoffThreshold: 3600s
 
+        # Whether to use a Byzantine Fault Tolerant (BFT) client implementation
+        bft: false
+
     # Type for the local MSP - by default it's of type bccsp
     localMspType: bccsp
 
