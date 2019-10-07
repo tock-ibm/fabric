@@ -43,12 +43,34 @@ func (b *blocksRequester) RequestBlocks(ledgerInfoProvider blocksprovider.Ledger
 
 	if height > 0 {
 		logger.Infof("Starting deliver with block [%d] for channel %s", height, b.chainID)
-		if err := b.seekLatestFromCommitter(height); err != nil {
+		if err := b.seekLatestFromCommitter(height, orderer.SeekInfo_BLOCK); err != nil {
 			return err
 		}
 	} else {
 		logger.Infof("Starting deliver with oldest block for channel %s", b.chainID)
-		if err := b.seekOldest(); err != nil {
+		if err := b.seekOldest(orderer.SeekInfo_BLOCK); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (b *blocksRequester) RequestHeaders(ledgerInfoProvider blocksprovider.LedgerInfo) error {
+	height, err := ledgerInfoProvider.LedgerHeight()
+	if err != nil {
+		logger.Errorf("Can't get ledger height for channel %s from committer [%s]", b.chainID, err)
+		return err
+	}
+
+	if height > 0 {
+		logger.Infof("Starting deliver with block [%d] for channel %s", height, b.chainID)
+		if err := b.seekLatestFromCommitter(height, orderer.SeekInfo_HEADER_WITH_SIG); err != nil {
+			return err
+		}
+	} else {
+		logger.Infof("Starting deliver with oldest block for channel %s", b.chainID)
+		if err := b.seekOldest(orderer.SeekInfo_HEADER_WITH_SIG); err != nil {
 			return err
 		}
 	}
@@ -63,11 +85,12 @@ func (b *blocksRequester) getTLSCertHash() []byte {
 	return nil
 }
 
-func (b *blocksRequester) seekOldest() error {
+func (b *blocksRequester) seekOldest(contentType orderer.SeekInfo_SeekContentType) error {
 	seekInfo := &orderer.SeekInfo{
-		Start:    &orderer.SeekPosition{Type: &orderer.SeekPosition_Oldest{Oldest: &orderer.SeekOldest{}}},
-		Stop:     &orderer.SeekPosition{Type: &orderer.SeekPosition_Specified{Specified: &orderer.SeekSpecified{Number: math.MaxUint64}}},
-		Behavior: orderer.SeekInfo_BLOCK_UNTIL_READY,
+		Start:       &orderer.SeekPosition{Type: &orderer.SeekPosition_Oldest{Oldest: &orderer.SeekOldest{}}},
+		Stop:        &orderer.SeekPosition{Type: &orderer.SeekPosition_Specified{Specified: &orderer.SeekSpecified{Number: math.MaxUint64}}},
+		Behavior:    orderer.SeekInfo_BLOCK_UNTIL_READY,
+		ContentType: contentType,
 	}
 
 	//TODO- epoch and msgVersion may need to be obtained for nowfollowing usage in orderer/configupdate/configupdate.go
@@ -81,11 +104,12 @@ func (b *blocksRequester) seekOldest() error {
 	return b.client.Send(env)
 }
 
-func (b *blocksRequester) seekLatestFromCommitter(height uint64) error {
+func (b *blocksRequester) seekLatestFromCommitter(height uint64, contentType orderer.SeekInfo_SeekContentType) error {
 	seekInfo := &orderer.SeekInfo{
-		Start:    &orderer.SeekPosition{Type: &orderer.SeekPosition_Specified{Specified: &orderer.SeekSpecified{Number: height}}},
-		Stop:     &orderer.SeekPosition{Type: &orderer.SeekPosition_Specified{Specified: &orderer.SeekSpecified{Number: math.MaxUint64}}},
-		Behavior: orderer.SeekInfo_BLOCK_UNTIL_READY,
+		Start:       &orderer.SeekPosition{Type: &orderer.SeekPosition_Specified{Specified: &orderer.SeekSpecified{Number: height}}},
+		Stop:        &orderer.SeekPosition{Type: &orderer.SeekPosition_Specified{Specified: &orderer.SeekSpecified{Number: math.MaxUint64}}},
+		Behavior:    orderer.SeekInfo_BLOCK_UNTIL_READY,
+		ContentType: contentType,
 	}
 
 	//TODO- epoch and msgVersion may need to be obtained for nowfollowing usage in orderer/configupdate/configupdate.go
