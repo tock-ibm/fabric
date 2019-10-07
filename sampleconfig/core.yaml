@@ -336,6 +336,9 @@ peer:
         #  - from:
         #    to:
 
+        # Whether to use a Byzantine Fault Tolerant (BFT) client implementation
+        bft: false
+
     # Type for the local MSP - by default it's of type bccsp
     localMspType: bccsp
 

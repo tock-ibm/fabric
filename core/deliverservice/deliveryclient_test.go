@@ -86,61 +86,72 @@ func (*mockMCS) ValidateIdentity(peerIdentity api.PeerIdentityType) error {
 }
 
 func TestNewDeliverService(t *testing.T) {
-	defer ensureNoGoroutineLeak(t)()
-	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64, 1)}
-	factory := &struct{ mockBlocksDelivererFactory }{}
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			viper.Set("peer.deliveryclient.bft", isBFT)
 
-	blocksDeliverer := &mocks.MockBlocksDeliverer{}
-	blocksDeliverer.MockRecv = mocks.MockRecv
+			defer ensureNoGoroutineLeak(t)()
+			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64, 1)}
+			factory := &struct{ mockBlocksDelivererFactory }{}
 
-	factory.mockCreate = func() (blocksprovider.BlocksDeliverer, error) {
-		return blocksDeliverer, nil
+			blocksDeliverer := &mocks.MockBlocksDeliverer{}
+			blocksDeliverer.MockRecv = mocks.MockRecv
+
+			factory.mockCreate = func() (blocksprovider.BlocksDeliverer, error) {
+				return blocksDeliverer, nil
+			}
+			abcf := func(*grpc.ClientConn) orderer.AtomicBroadcastClient {
+				return &mocks.MockAtomicBroadcastClient{
+					BD: blocksDeliverer,
+				}
+			}
+
+			connFactory := func(string, map[string]*comm.OrdererEndpoint) func(comm.EndpointCriteria) (*grpc.ClientConn, error) {
+				return func(endpoint comm.EndpointCriteria) (*grpc.ClientConn, error) {
+					lock.Lock()
+					defer lock.Unlock()
+					return newConnection(), nil
+				}
+			}
+			service, err := NewDeliverService(&Config{
+				Gossip:      gossipServiceAdapter,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  abcf,
+				ConnFactory: connFactory,
+			}, ConnectionCriteria{
+				Organizations: []string{"org"},
+				OrdererEndpointsByOrg: map[string][]string{
+					"org": {"a"},
+				},
+			})
+			assert.NoError(t, err)
+			assert.NoError(t, service.StartDeliverForChannel("TEST_CHAINID", &mocks.MockLedgerInfo{Height: 0}, func() {}))
+
+			// Lets start deliver twice
+			assert.Error(t, service.StartDeliverForChannel("TEST_CHAINID", &mocks.MockLedgerInfo{Height: 0}, func() {}), "can't start delivery")
+			// Lets stop deliver that not started
+			assert.Error(t, service.StopDeliverForChannel("TEST_CHAINID2"), "can't stop delivery")
+
+			// Let it try to simulate a few recv -> gossip rounds
+			time.Sleep(time.Second)
+			assert.NoError(t, service.StopDeliverForChannel("TEST_CHAINID"))
+			time.Sleep(time.Duration(10) * time.Millisecond)
+			// Make sure to stop all blocks providers
+			service.Stop()
+			time.Sleep(time.Duration(500) * time.Millisecond)
+			connWG.Wait()
+
+			if !isBFT { // TODO remove once implementation is complete
+				assertBlockDissemination(0, gossipServiceAdapter.GossipBlockDisseminations, t)
+				assert.Equal(t, blocksDeliverer.RecvCount(), gossipServiceAdapter.AddPayloadCount())
+			}
+			assert.Error(t, service.StartDeliverForChannel("TEST_CHAINID", &mocks.MockLedgerInfo{Height: 0}, func() {}), "Delivery service is stopping")
+			assert.Error(t, service.StopDeliverForChannel("TEST_CHAINID"), "Delivery service is stopping")
+		})
 	}
-	abcf := func(*grpc.ClientConn) orderer.AtomicBroadcastClient {
-		return &mocks.MockAtomicBroadcastClient{
-			BD: blocksDeliverer,
-		}
-	}
 
-	connFactory := func(string, map[string]*comm.OrdererEndpoint) func(comm.EndpointCriteria) (*grpc.ClientConn, error) {
-		return func(endpoint comm.EndpointCriteria) (*grpc.ClientConn, error) {
-			lock.Lock()
-			defer lock.Unlock()
-			return newConnection(), nil
-		}
-	}
-	service, err := NewDeliverService(&Config{
-		Gossip:      gossipServiceAdapter,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  abcf,
-		ConnFactory: connFactory,
-	}, ConnectionCriteria{
-		Organizations: []string{"org"},
-		OrdererEndpointsByOrg: map[string][]string{
-			"org": {"a"},
-		},
-	})
-	assert.NoError(t, err)
-	assert.NoError(t, service.StartDeliverForChannel("TEST_CHAINID", &mocks.MockLedgerInfo{Height: 0}, func() {}))
-
-	// Lets start deliver twice
-	assert.Error(t, service.StartDeliverForChannel("TEST_CHAINID", &mocks.MockLedgerInfo{Height: 0}, func() {}), "can't start delivery")
-	// Lets stop deliver that not started
-	assert.Error(t, service.StopDeliverForChannel("TEST_CHAINID2"), "can't stop delivery")
-
-	// Let it try to simulate a few recv -> gossip rounds
-	time.Sleep(time.Second)
-	assert.NoError(t, service.StopDeliverForChannel("TEST_CHAINID"))
-	time.Sleep(time.Duration(10) * time.Millisecond)
-	// Make sure to stop all blocks providers
-	service.Stop()
-	time.Sleep(time.Duration(500) * time.Millisecond)
-	connWG.Wait()
-
-	assertBlockDissemination(0, gossipServiceAdapter.GossipBlockDisseminations, t)
-	assert.Equal(t, blocksDeliverer.RecvCount(), gossipServiceAdapter.AddPayloadCount())
-	assert.Error(t, service.StartDeliverForChannel("TEST_CHAINID", &mocks.MockLedgerInfo{Height: 0}, func() {}), "Delivery service is stopping")
-	assert.Error(t, service.StopDeliverForChannel("TEST_CHAINID"), "Delivery service is stopping")
+	viper.Set("peer.deliveryclient.bft", false)
 }
 
 func TestDeliverServiceRestart(t *testing.T) {

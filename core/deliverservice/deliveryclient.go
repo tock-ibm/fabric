@@ -48,6 +48,10 @@ func staticRootsEnabled() bool {
 	return viper.GetBool("peer.deliveryclient.staticRootsEnabled")
 }
 
+func isBFTClient() bool {
+	return viper.GetBool("peer.deliveryclient.bft")
+}
+
 // DeliverService used to communicate with orderers to obtain
 // new blocks and send them to the committer service
 type DeliverService interface {
@@ -78,9 +82,13 @@ type deliverServiceImpl struct {
 	stopping       bool
 }
 
+type endpointUpdater interface {
+	UpdateEndpoints(endpoints []comm.EndpointCriteria)
+}
+
 type deliverClient struct {
 	bp      blocksprovider.BlocksProvider
-	bclient *broadcastClient
+	bclient endpointUpdater
 }
 
 // Config dictates the DeliveryService's properties,
@@ -224,11 +232,20 @@ func (d *deliverServiceImpl) StartDeliverForChannel(chainID string, ledgerInfo b
 		logger.Errorf(errMsg)
 		return errors.New(errMsg)
 	} else {
-		client := d.newClient(chainID, ledgerInfo)
-		logger.Info("This peer will retrieve blocks from ordering service and disseminate to other peers in the organization for channel", chainID)
-		d.deliverClients[chainID] = &deliverClient{
-			bp:      blocksprovider.NewBlocksProvider(chainID, client, d.conf.Gossip, d.conf.CryptoSvc),
-			bclient: client,
+		if !isBFTClient() {
+			client := d.newClient(chainID, ledgerInfo)
+			logger.Info("This peer will retrieve blocks from ordering service and disseminate to other peers in the organization for channel", chainID)
+			d.deliverClients[chainID] = &deliverClient{
+				bp:      blocksprovider.NewBlocksProvider(chainID, client, d.conf.Gossip, d.conf.CryptoSvc),
+				bclient: client,
+			}
+		} else {
+			bftClient := d.newBFTClient(chainID, ledgerInfo)
+			logger.Info("This peer will retrieve blocks from ordering service and disseminate to other peers in the organization for channel", chainID)
+			d.deliverClients[chainID] = &deliverClient{
+				bp:      blocksprovider.NewBlocksProvider(chainID, bftClient, d.conf.Gossip, d.conf.CryptoSvc),
+				bclient: bftClient,
+			}
 		}
 		go d.launchBlockProvider(chainID, finalizer)
 	}
@@ -302,6 +319,22 @@ func (d *deliverServiceImpl) newClient(chainID string, ledgerInfoProvider blocks
 	bClient := NewBroadcastClient(connProd, d.conf.ABCFactory, broadcastSetup, backoffPolicy)
 	requester.client = bClient
 	return bClient
+}
+
+func (d *deliverServiceImpl) newBFTClient(chainID string, ledgerInfoProvider blocksprovider.LedgerInfo) *bftDeliveryClient {
+	reconnectBackoffThreshold := getReConnectBackoffThreshold()
+	reconnectTotalTimeThreshold := getReConnectTotalTimeThreshold()
+	backoffPolicy := func(attemptNum int, elapsedTime time.Duration) (time.Duration, bool) {
+		if elapsedTime >= reconnectTotalTimeThreshold {
+			return 0, false
+		}
+		sleepIncrement := float64(time.Millisecond * 500)
+		attempt := float64(attemptNum)
+		return time.Duration(math.Min(math.Pow(2, attempt)*sleepIncrement, reconnectBackoffThreshold)), true
+	}
+
+	bftClient := NewBFTDeliveryClient(chainID, d.conf.ConnFactory(chainID, d.connConfig.OrdererEndpointOverrides), d.connConfig.toEndpointCriteria(), d.conf.ABCFactory, ledgerInfoProvider, backoffPolicy)
+	return bftClient
 }
 
 func DefaultConnectionFactory(channelID string, endpointOverrides map[string]*comm.OrdererEndpoint) func(endpointCriteria comm.EndpointCriteria) (*grpc.ClientConn, error) {
