@@ -21,8 +21,8 @@ import (
 	"google.golang.org/grpc"
 )
 
-// broadcastSetup is a function that is called by the broadcastClient immediately after each
-// successful connection to the ordering service
+// broadcastSetup is a function that is called by the broadcastClient immediately after each successful connection to
+// the ordering service in order to request the reception of a stream of blocks
 type broadcastSetup func(blocksprovider.BlocksDeliverer) error
 
 // retryPolicy receives as parameters the number of times the attempt has failed
