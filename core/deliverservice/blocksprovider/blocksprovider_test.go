@@ -46,6 +46,14 @@ func (m *mockMCS) VerifyBlock(chainID common2.ChainID, seqNum uint64, signedBloc
 	return nil
 }
 
+func (m *mockMCS) VerifyHeader(chainID common2.ChainID, seqNum uint64, signedBlock *common.Block) error {
+	args := m.Called()
+	if args.Get(0) != nil {
+		return args.Get(0).(error)
+	}
+	return nil
+}
+
 func (*mockMCS) Sign(msg []byte) ([]byte, error) {
 	return msg, nil
 }

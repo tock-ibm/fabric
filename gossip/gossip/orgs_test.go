@@ -24,6 +24,7 @@ import (
 	"github.com/hyperledger/fabric/gossip/gossip/channel"
 	"github.com/hyperledger/fabric/gossip/metrics"
 	"github.com/hyperledger/fabric/gossip/util"
+	protoscommon "github.com/hyperledger/fabric/protos/common"
 	proto "github.com/hyperledger/fabric/protos/gossip"
 	"github.com/stretchr/testify/assert"
 )
@@ -71,6 +72,10 @@ func (*configurableCryptoService) GetPKIidOfCert(peerIdentity api.PeerIdentityTy
 // VerifyBlock returns nil if the block is properly signed,
 // else returns error
 func (*configurableCryptoService) VerifyBlock(chainID common.ChainID, seqNum uint64, signedBlock []byte) error {
+	return nil
+}
+
+func (*configurableCryptoService) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *protoscommon.Block) error {
 	return nil
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger/fabric/gossip/util"
 	"github.com/hyperledger/fabric/msp/mgmt"
 	"github.com/hyperledger/fabric/msp/mgmt/testtools"
+	protoscommon "github.com/hyperledger/fabric/protos/common"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
@@ -103,6 +104,10 @@ func (s *cryptoService) GetPKIidOfCert(peerIdentity api.PeerIdentityType) common
 }
 
 func (s *cryptoService) VerifyBlock(chainID common.ChainID, seqNum uint64, signedBlock []byte) error {
+	return nil
+}
+
+func (s *cryptoService) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *protoscommon.Block) error {
 	return nil
 }
 
