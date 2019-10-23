@@ -806,6 +806,10 @@ func (*naiveCryptoService) VerifyBlock(chainID gossipCommon.ChainID, seqNum uint
 	return nil
 }
 
+func (*naiveCryptoService) VerifyHeader(chainID gossipCommon.ChainID, seqNum uint64, signedBlock *common.Block) error {
+	return nil
+}
+
 // Sign signs msg with this peer's signing key and outputs
 // the signature if no error occurred.
 func (*naiveCryptoService) Sign(msg []byte) ([]byte, error) {

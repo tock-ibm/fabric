@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	common2 "github.com/hyperledger/fabric/protos/common"
+
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"github.com/hyperledger/fabric/core/comm"
@@ -89,6 +91,10 @@ func (*naiveSecProvider) GetPKIidOfCert(peerIdentity api.PeerIdentityType) commo
 // VerifyBlock returns nil if the block is properly signed,
 // else returns error
 func (*naiveSecProvider) VerifyBlock(chainID common.ChainID, seqNum uint64, signedBlock []byte) error {
+	return nil
+}
+
+func (*naiveSecProvider) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *common2.Block) error {
 	return nil
 }
 
