@@ -70,7 +70,7 @@ func (*mockMCS) VerifyBlock(chainID common.ChainID, seqNum uint64, signedBlock [
 	return nil
 }
 
-func (*mockMCS) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *common2.Block) error {
+func (*mockMCS) VerifyHeader(chainID string, signedBlock *common2.Block) error {
 	return nil
 }
 

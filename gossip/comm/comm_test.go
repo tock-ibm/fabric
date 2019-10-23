@@ -94,7 +94,7 @@ func (*naiveSecProvider) VerifyBlock(chainID common.ChainID, seqNum uint64, sign
 	return nil
 }
 
-func (*naiveSecProvider) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *common2.Block) error {
+func (*naiveSecProvider) VerifyHeader(chainID string, signedBlock *common2.Block) error {
 	return nil
 }
 

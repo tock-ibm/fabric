@@ -32,7 +32,7 @@ type MessageCryptoService interface {
 
 	// VerifyHeader does the same as VerifyBlock, except it does not compute the block.Data.Hash() and compare it to
 	// the block.Header.DataHash. This is used when the orderer delivers a block with header & metadata only.
-	VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *protoscommon.Block) error
+	VerifyHeader(chainID string, signedBlock *protoscommon.Block) error
 
 	// Sign signs msg with this peer's signing key and outputs
 	// the signature if no error occurred.
