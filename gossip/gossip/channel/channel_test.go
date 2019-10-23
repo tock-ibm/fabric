@@ -27,6 +27,7 @@ import (
 	"github.com/hyperledger/fabric/gossip/metrics"
 	"github.com/hyperledger/fabric/gossip/metrics/mocks"
 	"github.com/hyperledger/fabric/gossip/util"
+	protoscommon "github.com/hyperledger/fabric/protos/common"
 	proto "github.com/hyperledger/fabric/protos/gossip"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -139,6 +140,10 @@ func (cs *cryptoService) VerifyBlock(chainID common.ChainID, seqNum uint64, sign
 		return nil
 	}
 	return args.Get(0).(error)
+}
+
+func (cs *cryptoService) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *protoscommon.Block) error {
+	panic("Should not be called in this test")
 }
 
 func (cs *cryptoService) Sign(msg []byte) ([]byte, error) {

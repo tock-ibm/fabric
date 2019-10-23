@@ -22,6 +22,7 @@ import (
 	"github.com/hyperledger/fabric/gossip/api"
 	"github.com/hyperledger/fabric/gossip/common"
 	msptesttools "github.com/hyperledger/fabric/msp/mgmt/testtools"
+	common2 "github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/orderer"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -66,6 +67,10 @@ func (*mockMCS) GetPKIidOfCert(peerIdentity api.PeerIdentityType) common.PKIidTy
 }
 
 func (*mockMCS) VerifyBlock(chainID common.ChainID, seqNum uint64, signedBlock []byte) error {
+	return nil
+}
+
+func (*mockMCS) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *common2.Block) error {
 	return nil
 }
 
