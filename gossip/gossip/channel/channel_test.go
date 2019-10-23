@@ -142,7 +142,7 @@ func (cs *cryptoService) VerifyBlock(chainID common.ChainID, seqNum uint64, sign
 	return args.Get(0).(error)
 }
 
-func (cs *cryptoService) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *protoscommon.Block) error {
+func (cs *cryptoService) VerifyHeader(chainID string, signedBlock *protoscommon.Block) error {
 	panic("Should not be called in this test")
 }
 

@@ -187,31 +187,26 @@ func (s *MSPMessageCryptoService) verifyHeaderWithMetadata(channelID string, hea
 	return policy.Evaluate(signatureSet)
 }
 
-func (s *MSPMessageCryptoService) VerifyHeader(chainID common.ChainID, seqNum uint64, block *pcommon.Block) error {
-	if block == nil {
+func (s *MSPMessageCryptoService) VerifyHeader(chainID string, signedBlock *pcommon.Block) error {
+	if signedBlock == nil {
 		return fmt.Errorf("Invalid Block on channel [%s]. Block is nil.", chainID)
 	}
 
-	if block.Header == nil {
+	if signedBlock.Header == nil {
 		return fmt.Errorf("Invalid Block on channel [%s]. Header must be different from nil.", chainID)
 	}
 
-	blockSeqNum := block.Header.Number
-	if seqNum != blockSeqNum {
-		return fmt.Errorf("Claimed seqNum is [%d] but actual seqNum inside block is [%d]", seqNum, blockSeqNum)
-	}
-
 	// - Unmarshal metadata
-	if block.Metadata == nil || len(block.Metadata.Metadata) == 0 {
-		return fmt.Errorf("Block with id [%d] on channel [%s] does not have metadata. Block not valid.", block.Header.Number, chainID)
+	if signedBlock.Metadata == nil || len(signedBlock.Metadata.Metadata) == 0 {
+		return fmt.Errorf("Block with id [%d] on channel [%s] does not have metadata. Block not valid.", signedBlock.Header.Number, chainID)
 	}
 
-	metadata, err := utils.GetMetadataFromBlock(block, pcommon.BlockMetadataIndex_SIGNATURES)
+	metadata, err := utils.GetMetadataFromBlock(signedBlock, pcommon.BlockMetadataIndex_SIGNATURES)
 	if err != nil {
 		return fmt.Errorf("Failed unmarshalling medatata for signatures [%s]", err)
 	}
 
-	return s.verifyHeaderWithMetadata(string(chainID), block.Header, metadata)
+	return s.verifyHeaderWithMetadata(chainID, signedBlock.Header, metadata)
 }
 
 // Sign signs msg with this peer's signing key and outputs

@@ -107,7 +107,7 @@ func (s *cryptoService) VerifyBlock(chainID common.ChainID, seqNum uint64, signe
 	return nil
 }
 
-func (s *cryptoService) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *protoscommon.Block) error {
+func (s *cryptoService) VerifyHeader(chainID string, signedBlock *protoscommon.Block) error {
 	return nil
 }
 

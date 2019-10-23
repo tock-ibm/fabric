@@ -259,32 +259,28 @@ func TestVerifyBlock(t *testing.T) {
 		block2.Data = nil
 
 		// - Verify block
-		assert.NoError(t, msgCryptoService.VerifyHeader([]byte("C"), 42, block))
-		// Wrong sequence number claimed
-		err = msgCryptoService.VerifyHeader([]byte("C"), 43, block)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "but actual seqNum inside block is")
+		assert.NoError(t, msgCryptoService.VerifyHeader("C", block))
 		delete(policyManagerGetter.Managers, "D")
-		nilPolMgrErr := msgCryptoService.VerifyHeader([]byte("D"), 42, block2)
+		nilPolMgrErr := msgCryptoService.VerifyHeader("D", block2)
 		assert.Contains(t, nilPolMgrErr.Error(), "Could not acquire policy manager")
 		assert.Error(t, nilPolMgrErr)
-		assert.Error(t, msgCryptoService.VerifyHeader([]byte("A"), 42, block))
-		assert.Error(t, msgCryptoService.VerifyHeader([]byte("B"), 42, block))
+		assert.Error(t, msgCryptoService.VerifyHeader("A", block))
+		assert.Error(t, msgCryptoService.VerifyHeader("B", block))
 
 		// - Prepare testing invalid block (wrong data has), Alice signs it.
 		policyManagerGetter.Managers["C"].(*mocks.ChannelPolicyManager).Policy.(*mocks.Policy).Deserializer.(*mocks.IdentityDeserializer).Msg = msgInvalid
 
 		// - Verify block
-		assert.Error(t, msgCryptoService.VerifyHeader([]byte("C"), 42, block))
+		assert.Error(t, msgCryptoService.VerifyHeader("C", block))
 
 		// Check invalid args
 		block.Header.DataHash = []byte{0, 1, 2, 3, 4}
-		assert.Error(t, msgCryptoService.VerifyHeader([]byte("C"), 42, block))
+		assert.Error(t, msgCryptoService.VerifyHeader("C", block))
 		block.Metadata = nil
-		assert.Error(t, msgCryptoService.VerifyHeader([]byte("C"), 42, block))
+		assert.Error(t, msgCryptoService.VerifyHeader("C", block))
 		block.Header = nil
-		assert.Error(t, msgCryptoService.VerifyHeader([]byte("C"), 42, block))
-		assert.Error(t, msgCryptoService.VerifyHeader([]byte("C"), 42, nil))
+		assert.Error(t, msgCryptoService.VerifyHeader("C", block))
+		assert.Error(t, msgCryptoService.VerifyHeader("C", nil))
 
 		policyManagerGetter.Managers["D"] = managerD
 		policyManagerGetter.Managers["C"].(*mocks.ChannelPolicyManager).Policy.(*mocks.Policy).Deserializer.(*mocks.IdentityDeserializer).Msg = msg

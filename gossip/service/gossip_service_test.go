@@ -806,7 +806,7 @@ func (*naiveCryptoService) VerifyBlock(chainID gossipCommon.ChainID, seqNum uint
 	return nil
 }
 
-func (*naiveCryptoService) VerifyHeader(chainID gossipCommon.ChainID, seqNum uint64, signedBlock *common.Block) error {
+func (*naiveCryptoService) VerifyHeader(chainID string, signedBlock *common.Block) error {
 	return nil
 }
 
