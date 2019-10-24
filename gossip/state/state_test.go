@@ -130,7 +130,7 @@ func (*cryptoServiceMock) VerifyBlock(chainID common.ChainID, seqNum uint64, sig
 	return nil
 }
 
-func (*cryptoServiceMock) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *pcomm.Block) error {
+func (*cryptoServiceMock) VerifyHeader(chainID string, signedBlock *pcomm.Block) error {
 	return nil
 }
 

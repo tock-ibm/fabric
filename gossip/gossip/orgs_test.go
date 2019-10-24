@@ -75,7 +75,7 @@ func (*configurableCryptoService) VerifyBlock(chainID common.ChainID, seqNum uin
 	return nil
 }
 
-func (*configurableCryptoService) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *protoscommon.Block) error {
+func (*configurableCryptoService) VerifyHeader(chainID string, signedBlock *protoscommon.Block) error {
 	return nil
 }
 

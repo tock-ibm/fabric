@@ -83,7 +83,7 @@ func (*naiveCryptoService) VerifyBlock(chainID common.ChainID, seqNum uint64, si
 	return nil
 }
 
-func (*naiveCryptoService) VerifyHeader(chainID common.ChainID, seqNum uint64, signedBlock *common2.Block) error {
+func (*naiveCryptoService) VerifyHeader(chainID string, signedBlock *common2.Block) error {
 	return nil
 }
 
