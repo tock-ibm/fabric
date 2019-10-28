@@ -86,7 +86,7 @@ func NewConnectionProducer(factory ConnectionFactory, endpoints []EndpointCriter
 	if len(endpoints) == 0 {
 		return nil
 	}
-	return &ConnProducer{endpoints: shuffle(endpoints), connect: factory}
+	return &ConnProducer{endpoints: Shuffle(endpoints), connect: factory}
 }
 
 // NewConnection creates a new connection.
@@ -129,7 +129,7 @@ func (cp *ConnProducer) UpdateEndpoints(endpoints []EndpointCriteria) {
 	cp.endpoints = endpoints
 }
 
-func shuffle(a []EndpointCriteria) []EndpointCriteria {
+func Shuffle(a []EndpointCriteria) []EndpointCriteria {
 	n := len(a)
 	returnedSlice := make([]EndpointCriteria, n)
 	rand.Seed(time.Now().UnixNano())

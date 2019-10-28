@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hyperledger/fabric/common/flogging"
+
 	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/deliverservice/blocksprovider"
 	"github.com/hyperledger/fabric/core/deliverservice/mocks"
@@ -94,6 +96,8 @@ func TestNewDeliverService(t *testing.T) {
 	bftOpt := []bool{false, true}
 	for _, isBFT := range bftOpt {
 		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
+
 			viper.Set("peer.deliveryclient.bft", isBFT)
 
 			defer ensureNoGoroutineLeak(t)()
@@ -147,10 +151,9 @@ func TestNewDeliverService(t *testing.T) {
 			time.Sleep(time.Duration(500) * time.Millisecond)
 			connWG.Wait()
 
-			if !isBFT { // TODO remove once implementation is complete
-				assertBlockDissemination(0, gossipServiceAdapter.GossipBlockDisseminations, t)
-				assert.Equal(t, blocksDeliverer.RecvCount(), gossipServiceAdapter.AddPayloadCount())
-			}
+			assertBlockDissemination(0, gossipServiceAdapter.GossipBlockDisseminations, t)
+			assert.Equal(t, blocksDeliverer.RecvCount(), gossipServiceAdapter.AddPayloadCount())
+
 			assert.Error(t, service.StartDeliverForChannel("TEST_CHAINID", &mocks.MockLedgerInfo{Height: 0}, func() {}), "Delivery service is stopping")
 			assert.Error(t, service.StopDeliverForChannel("TEST_CHAINID"), "Delivery service is stopping")
 		})

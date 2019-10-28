@@ -127,6 +127,10 @@ func (mock *MockBlocksDeliverer) Disconnect() {
 	mock.DisconnectCalled <- struct{}{}
 }
 
+func (mock *MockBlocksDeliverer) UpdateReceived(blockNumber uint64) {
+	// nothing to do
+}
+
 func (mock *MockBlocksDeliverer) Close() {
 	if mock.CloseCalled == nil {
 		return

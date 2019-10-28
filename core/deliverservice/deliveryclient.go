@@ -240,7 +240,7 @@ func (d *deliverServiceImpl) StartDeliverForChannel(chainID string, ledgerInfo b
 				bclient: client,
 			}
 		} else {
-			bftClient := d.newBFTClient(chainID, ledgerInfo)
+			bftClient := d.newBFTClient(chainID, ledgerInfo, d.conf.CryptoSvc)
 			logger.Info("This peer will retrieve blocks from ordering service and disseminate to other peers in the organization for channel", chainID)
 			d.deliverClients[chainID] = &deliverClient{
 				bp:      blocksprovider.NewBlocksProvider(chainID, bftClient, d.conf.Gossip, d.conf.CryptoSvc),
@@ -321,19 +321,8 @@ func (d *deliverServiceImpl) newClient(chainID string, ledgerInfoProvider blocks
 	return bClient
 }
 
-func (d *deliverServiceImpl) newBFTClient(chainID string, ledgerInfoProvider blocksprovider.LedgerInfo) *bftDeliveryClient {
-	reconnectBackoffThreshold := getReConnectBackoffThreshold()
-	reconnectTotalTimeThreshold := getReConnectTotalTimeThreshold()
-	backoffPolicy := func(attemptNum int, elapsedTime time.Duration) (time.Duration, bool) {
-		if elapsedTime >= reconnectTotalTimeThreshold {
-			return 0, false
-		}
-		sleepIncrement := float64(time.Millisecond * 500)
-		attempt := float64(attemptNum)
-		return time.Duration(math.Min(math.Pow(2, attempt)*sleepIncrement, reconnectBackoffThreshold)), true
-	}
-
-	bftClient := NewBFTDeliveryClient(chainID, d.conf.ConnFactory(chainID, d.connConfig.OrdererEndpointOverrides), d.connConfig.toEndpointCriteria(), d.conf.ABCFactory, ledgerInfoProvider, backoffPolicy)
+func (d *deliverServiceImpl) newBFTClient(chainID string, ledgerInfoProvider blocksprovider.LedgerInfo, mcs api.MessageCryptoService) *bftDeliveryClient {
+	bftClient := NewBFTDeliveryClient(chainID, d.conf.ConnFactory(chainID, d.connConfig.OrdererEndpointOverrides), d.connConfig.toEndpointCriteria(), d.conf.ABCFactory, ledgerInfoProvider, mcs)
 	return bftClient
 }
 
