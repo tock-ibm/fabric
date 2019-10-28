@@ -258,6 +258,18 @@ func (bc *broadcastClient) Disconnect() {
 	bc.blocksDeliverer = nil
 }
 
+// GetEndpoint returns the endpoint the client is currently connected to.
+func (bc *broadcastClient) GetEndpoint() string {
+	bc.mutex.Lock()
+	defer bc.mutex.Unlock()
+
+	return bc.endpoint
+}
+
+func (bc *broadcastClient) UpdateReceived(blockNumber uint64) {
+	// Nothing to do.
+}
+
 // UpdateEndpoints update endpoints to new values
 func (bc *broadcastClient) UpdateEndpoints(endpoints []comm.EndpointCriteria) {
 	bc.mutex.Lock()

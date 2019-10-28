@@ -116,7 +116,7 @@ func (o *Orderer) Deliver(stream orderer.AtomicBroadcast_DeliverServer) error {
 			if o.hasFailed() {
 				return stream.Send(statusUnavailable())
 			}
-			o.sendBlock(stream, seq)
+			o.sendBlock(stream, seq, seekInfo.ContentType)
 		}
 	}
 
@@ -130,12 +130,22 @@ func statusUnavailable() *orderer.DeliverResponse {
 	}
 }
 
-func (o *Orderer) sendBlock(stream orderer.AtomicBroadcast_DeliverServer, seq uint64) {
-	block := &common.Block{
-		Header: &common.BlockHeader{
-			Number: seq,
-		},
+func (o *Orderer) sendBlock(stream orderer.AtomicBroadcast_DeliverServer, seq uint64, contentType orderer.SeekInfo_SeekContentType) {
+	const numTx = 10
+	block := common.NewBlock(seq, []byte{1, 2, 3, 4, 5, 6, 7, 8})
+	data := &common.BlockData{
+		Data: make([][]byte, numTx),
 	}
+	for i := 0; i < numTx; i++ {
+		data.Data[i] = []byte{byte(i), byte(seq)}
+	}
+	block.Header.DataHash = data.Hash()
+	if contentType == orderer.SeekInfo_BLOCK {
+		block.Data = data
+	}
+
+	block.Metadata.Metadata[common.BlockMetadataIndex_SIGNATURES] = []byte("good")
+
 	stream.Send(&orderer.DeliverResponse{
 		Type: &orderer.DeliverResponse_Block{Block: block},
 	})
