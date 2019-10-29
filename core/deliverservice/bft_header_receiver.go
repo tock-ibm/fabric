@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package deliverclient
 
 import (
-	"math"
 	"sync"
 	"time"
 
@@ -24,7 +23,7 @@ type bftHeaderReceiver struct {
 	mutex             sync.Mutex
 	chainID           string
 	stop              bool
-	stopChan          chan interface{}
+	stopChan          chan struct{}
 	started           bool
 	endpoint          string
 	client            *broadcastClient
@@ -41,7 +40,7 @@ func newBFTHeaderReceiver(
 ) *bftHeaderReceiver {
 	hRcv := &bftHeaderReceiver{
 		chainID:           chainID,
-		stopChan:          make(chan interface{}, 1),
+		stopChan:          make(chan struct{}, 1),
 		endpoint:          endpoint,
 		client:            client,
 		msgCryptoVerifier: msgVerifier,
@@ -56,8 +55,8 @@ func (hr *bftHeaderReceiver) DeliverHeaders() {
 
 	bftLogger.Debugf("[%s] Starting to deliver headers from endpoint: %s", hr.chainID, hr.endpoint)
 	hr.setStarted()
-	errorStatusCounter := 0
-	statusCounter := 0
+	var errorStatusCounter int
+	var statusCounter uint
 
 	for !hr.isStopped() {
 		msg, err := hr.client.Recv()
@@ -83,12 +82,9 @@ func (hr *bftHeaderReceiver) DeliverHeaders() {
 				errorStatusCounter = 0
 				bftLogger.Warningf("[%s] Got error %v", hr.chainID, t)
 			}
-			maxDelay := float64(bftHeaderMaxRetryDelay)
-			currDelay := float64(time.Duration(math.Pow(2, float64(statusCounter))) * 100 * time.Millisecond)
-			time.Sleep(time.Duration(math.Min(maxDelay, currDelay)))
-			if currDelay < maxDelay {
-				statusCounter++
-			}
+			backoff(2.0, statusCounter, hr.stopChan)
+			statusCounter++
+
 			hr.client.Disconnect()
 			continue
 
