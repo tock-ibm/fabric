@@ -13,12 +13,11 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
-	"github.com/spf13/viper"
-
 	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/deliverservice/blocksprovider"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/orderer"
+	"github.com/spf13/viper"
 )
 
 var bftLogger = flogging.MustGetLogger("bftDeliveryClient")
@@ -133,7 +132,7 @@ func (c *bftDeliveryClient) Recv() (response *orderer.DeliverResponse, err error
 		c.closeBlockReceiver()
 		numRetries++
 		if numRetries%numEP == 0 {
-			backoff(uint(numRetries/numEP), c.stopChan)
+			backoff(2.0, uint(numRetries/numEP), c.stopChan)
 		}
 	}
 
@@ -141,11 +140,19 @@ func (c *bftDeliveryClient) Recv() (response *orderer.DeliverResponse, err error
 	return response, err
 }
 
-func backoff(exponent uint, stopChan <-chan struct{}) {
-	backoffDur := (1 << exponent) * bftBaseBackoffDuration
-	if backoffDur > bftMaxBackoffDuration {
-		backoffDur = bftMaxBackoffDuration
+func backoff(base float64, exponent uint, stopChan <-chan struct{}) {
+	var backoffDur time.Duration
+
+	if base < 1.0 {
+		base = 1.0
 	}
+	fDur := math.Pow(base, float64(exponent)) * float64(bftBaseBackoffDuration.Nanoseconds())
+	if math.IsInf(fDur, 0) || math.IsNaN(fDur) || fDur > float64(bftMaxBackoffDuration) {
+		backoffDur = bftMaxBackoffDuration
+	} else {
+		backoffDur = time.Duration(int64(fDur))
+	}
+
 	backoffTimer := time.After(backoffDur)
 	select {
 	case <-backoffTimer:
