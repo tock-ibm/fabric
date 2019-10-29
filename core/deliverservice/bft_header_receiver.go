@@ -137,6 +137,7 @@ func (hr *bftHeaderReceiver) Close() {
 
 	hr.stop = true
 	hr.client.Close()
+	close(hr.stopChan)
 }
 
 func (hr *bftHeaderReceiver) LastBlockNum() (uint64, time.Time, error) {
