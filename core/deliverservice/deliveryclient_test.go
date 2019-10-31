@@ -98,9 +98,10 @@ func TestNewDeliverService(t *testing.T) {
 		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
 			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
 
-			viper.Set("peer.deliveryclient.bft", isBFT)
-
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			defer viper.Reset()
 			defer ensureNoGoroutineLeak(t)()
+
 			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64, 1)}
 			factory := &struct{ mockBlocksDelivererFactory }{}
 
@@ -158,132 +159,218 @@ func TestNewDeliverService(t *testing.T) {
 			assert.Error(t, service.StopDeliverForChannel("TEST_CHAINID"), "Delivery service is stopping")
 		})
 	}
-
-	viper.Set("peer.deliveryclient.bft", false)
 }
 
 func TestDeliverServiceRestart(t *testing.T) {
-	defer ensureNoGoroutineLeak(t)()
-	// Scenario: bring up ordering service instance, then shut it down, and then resurrect it.
-	// Client is expected to reconnect to it, and to ask for a block sequence that is the next block
-	// after the last block it got from the previous incarnation of the ordering service.
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			defer viper.Reset()
 
-	os := mocks.NewOrderer(5611, t)
+			defer ensureNoGoroutineLeak(t)()
+			// Scenario: bring up ordering service instance, then shut it down, and then resurrect it.
+			// Client is expected to reconnect to it, and to ask for a block sequence that is the next block
+			// after the last block it got from the previous incarnation of the ordering service.
 
-	time.Sleep(time.Second)
-	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+			os := mocks.NewOrderer(5611, t)
 
-	service, err := NewDeliverService(&Config{
-		Gossip:      gossipServiceAdapter,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, ConnectionCriteria{
-		Organizations: []string{"org"},
-		OrdererEndpointsByOrg: map[string][]string{
-			"org": {"localhost:5611"},
-		},
-	})
-	assert.NoError(t, err)
+			time.Sleep(time.Second)
+			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
 
-	li := &mocks.MockLedgerInfo{Height: uint64(100)}
-	os.SetNextExpectedSeek(uint64(100))
+			service, err := NewDeliverService(&Config{
+				Gossip:      gossipServiceAdapter,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, ConnectionCriteria{
+				Organizations: []string{"org"},
+				OrdererEndpointsByOrg: map[string][]string{
+					"org": {"localhost:5611"},
+				},
+			})
+			assert.NoError(t, err)
 
-	err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
-	assert.NoError(t, err, "can't start delivery")
-	// Check that delivery client requests blocks in order
-	go os.SendBlock(uint64(100))
-	assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
-	go os.SendBlock(uint64(101))
-	assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
-	go os.SendBlock(uint64(102))
-	assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
-	os.Shutdown()
-	time.Sleep(time.Second * 3)
-	os = mocks.NewOrderer(5611, t)
-	atomic.StoreUint64(&li.Height, uint64(103))
-	os.SetNextExpectedSeek(uint64(103))
-	go os.SendBlock(uint64(103))
-	assertBlockDissemination(103, gossipServiceAdapter.GossipBlockDisseminations, t)
-	service.Stop()
-	os.Shutdown()
+			li := &mocks.MockLedgerInfo{Height: uint64(100)}
+			os.SetNextExpectedSeek(uint64(100))
+
+			err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
+			assert.NoError(t, err, "can't start delivery")
+			// Check that delivery client requests blocks in order
+			go os.SendBlock(uint64(100))
+			assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
+			go os.SendBlock(uint64(101))
+			assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
+			go os.SendBlock(uint64(102))
+			assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
+			os.Shutdown()
+			time.Sleep(time.Second * 3)
+			os = mocks.NewOrderer(5611, t)
+			atomic.StoreUint64(&li.Height, uint64(103))
+			os.SetNextExpectedSeek(uint64(103))
+			go os.SendBlock(uint64(103))
+			assertBlockDissemination(103, gossipServiceAdapter.GossipBlockDisseminations, t)
+			service.Stop()
+			os.Shutdown()
+		})
+	}
 }
 
 func TestDeliverServiceFailover(t *testing.T) {
-	defer ensureNoGoroutineLeak(t)()
-	// Scenario: bring up 2 ordering service instances,
-	// and shut down the instance that the client has connected to.
-	// Client is expected to connect to the other instance, and to ask for a block sequence that is the next block
-	// after the last block it got from the ordering service that was shut down.
-	// Then, shut down the other node, and bring back the first (that was shut down first).
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			viper.Set("peer.deliveryclient.bft.blockRcvTotalBackoffDelay", time.Second)
+			viper.Set("peer.deliveryclient.connTimeout", 100*time.Millisecond)
 
-	os1 := mocks.NewOrderer(5612, t)
-	os2 := mocks.NewOrderer(5613, t)
+			defer viper.Reset()
 
-	time.Sleep(time.Second)
-	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+			defer ensureNoGoroutineLeak(t)()
+			// Scenario: bring up 2 ordering service instances,
+			// and shut down the instance that the client has connected to.
+			// Client is expected to connect to the other instance, and to ask for a block sequence that is the next block
+			// after the last block it got from the ordering service that was shut down.
+			// Then, shut down the other node, and bring back the first (that was shut down first).
 
-	service, err := NewDeliverService(&Config{
-		Gossip:      gossipServiceAdapter,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, ConnectionCriteria{
-		Organizations: []string{"org"},
-		OrdererEndpointsByOrg: map[string][]string{
-			"org": {"localhost:5612", "localhost:5613"},
-		},
-	})
-	assert.NoError(t, err)
-	li := &mocks.MockLedgerInfo{Height: uint64(100)}
-	os1.SetNextExpectedSeek(uint64(100))
-	os2.SetNextExpectedSeek(uint64(100))
+			os1 := mocks.NewOrderer(5612, t)
+			os2 := mocks.NewOrderer(5613, t)
 
-	err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
-	assert.NoError(t, err, "can't start delivery")
-	// We need to discover to which instance the client connected to
-	go os1.SendBlock(uint64(100))
-	instance2fail := os1
-	reincarnatedNodePort := 5612
-	instance2failSecond := os2
-	select {
-	case seq := <-gossipServiceAdapter.GossipBlockDisseminations:
-		assert.Equal(t, uint64(100), seq)
-	case <-time.After(time.Second * 2):
-		// Shutdown first instance and replace it, in order to make an instance
-		// with an empty sending channel
-		os1.Shutdown()
-		time.Sleep(time.Second)
-		os1 = mocks.NewOrderer(5612, t)
-		instance2fail = os2
-		instance2failSecond = os1
-		reincarnatedNodePort = 5613
-		// Ensure we really are connected to the second instance,
-		// by making it send a block
-		go os2.SendBlock(uint64(100))
-		assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
+			time.Sleep(time.Second)
+			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+
+			service, err := NewDeliverService(&Config{
+				Gossip:      gossipServiceAdapter,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, ConnectionCriteria{
+				Organizations: []string{"org"},
+				OrdererEndpointsByOrg: map[string][]string{
+					"org": {"localhost:5612", "localhost:5613"},
+				},
+			})
+			assert.NoError(t, err)
+			li := &mocks.MockLedgerInfo{Height: uint64(100)}
+			os1.SetNextExpectedSeek(uint64(100))
+			os2.SetNextExpectedSeek(uint64(100))
+
+			err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
+			assert.NoError(t, err, "can't start delivery")
+
+			// We need to discover to which instance the client connected to
+			var count1, count2 int
+			var info1, info2 orderer.SeekInfo_SeekContentType
+			for {
+				count1, info1 = os1.ConnCountType()
+				count2, info2 = os2.ConnCountType()
+				if isBFT && count1 > 0 && count2 > 0 {
+					break
+				} else if !isBFT && (count1 > 0 || count2 > 0) {
+					break
+				}
+
+				time.Sleep(time.Millisecond)
+			}
+
+			blockEP := service.GetEndpoint("TEST_CHAINID")
+			logger.Infof("TEST: block receiver #1 endpoint=%s, type-os1=%s, type-os2=%s", blockEP, info1, info2)
+
+			var instance2fail, instance2failSecond *mocks.Orderer
+			var reincarnatedNodePort int
+			switch blockEP {
+			case "localhost:5612":
+				instance2fail = os1
+				instance2failSecond = os2
+				reincarnatedNodePort = 5612
+			case "localhost:5613":
+				instance2fail = os2
+				instance2failSecond = os1
+				reincarnatedNodePort = 5613
+			}
+
+			go instance2fail.SendBlock(uint64(100))
+			assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
+
+			atomic.StoreUint64(&li.Height, uint64(101))
+			os1.SetNextExpectedSeek(uint64(101))
+			os2.SetNextExpectedSeek(uint64(101))
+
+			// Fail the orderer node the client is connected to
+			instance2fail.Shutdown()
+			time.Sleep(4 * time.Second)
+			blockEP2 := service.GetEndpoint("TEST_CHAINID")
+			assert.NotEqual(t, blockEP, blockEP2)
+			logger.Infof("TEST: block receiver #2 endpoint=%s", blockEP2)
+
+			// Ensure the client asks blocks from the other ordering service node
+			go instance2failSecond.SendBlock(uint64(101))
+			assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
+			atomic.StoreUint64(&li.Height, uint64(102))
+
+			// Now shut down the 2nd node
+			instance2failSecond.Shutdown()
+			time.Sleep(1 * time.Second)
+			// Bring up the first one
+			os := mocks.NewOrderer(reincarnatedNodePort, t)
+			os.SetNextExpectedSeek(102)
+			time.Sleep(4 * time.Second)
+
+			blockEP3 := service.GetEndpoint("TEST_CHAINID")
+			assert.NotEqual(t, blockEP3, blockEP2)
+			logger.Infof("TEST: block receiver #3 endpoint=%s", blockEP3)
+			go os.SendBlock(uint64(102))
+			assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
+
+			service.Stop()
+			os.Shutdown()
+
+			//===
+			//instance2fail := os1
+			//reincarnatedNodePort := 5612
+			//instance2failSecond := os2
+			//select {
+			//case seq := <-gossipServiceAdapter.GossipBlockDisseminations:
+			//	assert.Equal(t, uint64(100), seq)
+			//case <-time.After(time.Second * 2):
+			//	// Shutdown first instance and replace it, in order to make an instance
+			//	// with an empty sending channel
+			//	os1.Shutdown()
+			//	time.Sleep(time.Second)
+			//	os1 = mocks.NewOrderer(5612, t)
+			//	instance2fail = os2
+			//	instance2failSecond = os1
+			//	reincarnatedNodePort = 5613
+			//	// Ensure we really are connected to the second instance,
+			//	// by making it send a block
+			//	go os2.SendBlock(uint64(100))
+			//	assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
+			//}
+			//
+			//atomic.StoreUint64(&li.Height, uint64(101))
+			//os1.SetNextExpectedSeek(uint64(101))
+			//os2.SetNextExpectedSeek(uint64(101))
+			//// Fail the orderer node the client is connected to
+			//instance2fail.Shutdown()
+			//time.Sleep(time.Second)
+			//// Ensure the client asks blocks from the other ordering service node
+			//go instance2failSecond.SendBlock(uint64(101))
+			//assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
+			//atomic.StoreUint64(&li.Height, uint64(102))
+			//// Now shut down the 2nd node
+			//instance2failSecond.Shutdown()
+			//time.Sleep(time.Second * 1)
+			//// Bring up the first one
+			//os := mocks.NewOrderer(reincarnatedNodePort, t)
+			//os.SetNextExpectedSeek(102)
+			//go os.SendBlock(uint64(102))
+			//assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
+			//os.Shutdown()
+			//service.Stop()
+		})
 	}
-
-	atomic.StoreUint64(&li.Height, uint64(101))
-	os1.SetNextExpectedSeek(uint64(101))
-	os2.SetNextExpectedSeek(uint64(101))
-	// Fail the orderer node the client is connected to
-	instance2fail.Shutdown()
-	time.Sleep(time.Second)
-	// Ensure the client asks blocks from the other ordering service node
-	go instance2failSecond.SendBlock(uint64(101))
-	assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
-	atomic.StoreUint64(&li.Height, uint64(102))
-	// Now shut down the 2nd node
-	instance2failSecond.Shutdown()
-	time.Sleep(time.Second * 1)
-	// Bring up the first one
-	os := mocks.NewOrderer(reincarnatedNodePort, t)
-	os.SetNextExpectedSeek(102)
-	go os.SendBlock(uint64(102))
-	assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
-	os.Shutdown()
-	service.Stop()
 }
 
 func TestDeliverServiceUpdateEndpoints(t *testing.T) {

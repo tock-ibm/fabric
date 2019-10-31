@@ -82,7 +82,9 @@ func (hr *bftHeaderReceiver) DeliverHeaders() {
 				errorStatusCounter = 0
 				bftLogger.Warningf("[%s] Got error %v", hr.chainID, t)
 			}
-			backoff(2.0, statusCounter, hr.stopChan)
+			dur := backOffDuration(2.0, statusCounter, bftMinBackoffDelay, bftMaxBackoffDelay)
+			bftLogger.Debugf("[%s] going to retry in: %s", hr.chainID, dur)
+			backOffSleep(dur, hr.stopChan)
 			statusCounter++
 
 			hr.client.Disconnect()
@@ -93,6 +95,7 @@ func (hr *bftHeaderReceiver) DeliverHeaders() {
 			statusCounter = 0
 			blockNum := t.Block.Header.Number
 
+			// TODO filter out of order delivery
 			// do not verify, just save for later, in case the block-receiver is suspected of censorship
 			bftLogger.Debugf("[%s] Saving block with header & metadata, blockNum = [%d]", hr.chainID, blockNum)
 			hr.mutex.Lock()
