@@ -142,6 +142,9 @@ func PreviousConfigBlockFromLedgerOrPanic(ledger Ledger, logger PanicLogger) *co
 
 func previousConfigBlockFromLedger(ledger Ledger) (*common.Block, error) {
 	previousBlockSeq := ledger.Height() - 2
+	if ledger.Height() == 1 {
+		previousBlockSeq = 0
+	}
 	previousBlock := ledger.Block(previousBlockSeq)
 	if previousBlock == nil {
 		return nil, errors.Errorf("unable to retrieve block [%d]", previousBlockSeq)
