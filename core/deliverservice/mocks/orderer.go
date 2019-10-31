@@ -9,6 +9,7 @@ package mocks
 import (
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -25,9 +26,13 @@ type Orderer struct {
 	nextExpectedSeek uint64
 	t                *testing.T
 	blockChannel     chan uint64
+	stop             bool
 	stopChan         chan struct{}
 	failFlag         int32
-	connCount        uint32
+
+	mutex       sync.Mutex
+	connCount   uint32
+	contentType orderer.SeekInfo_SeekContentType
 }
 
 func NewOrderer(port int, t *testing.T) *Orderer {
@@ -36,7 +41,8 @@ func NewOrderer(port int, t *testing.T) *Orderer {
 	if err != nil {
 		panic(err)
 	}
-	o := &Orderer{Server: srv,
+	o := &Orderer{
+		Server:           srv,
 		Listener:         lsnr,
 		t:                t,
 		nextExpectedSeek: uint64(1),
@@ -44,14 +50,14 @@ func NewOrderer(port int, t *testing.T) *Orderer {
 		stopChan:         make(chan struct{}, 1),
 	}
 	orderer.RegisterAtomicBroadcastServer(srv, o)
-	go srv.Serve(lsnr)
+	go func() { _ = srv.Serve(lsnr) }()
 	return o
 }
 
 func (o *Orderer) Shutdown() {
-	o.stopChan <- struct{}{}
+	close(o.stopChan)
 	o.Server.Stop()
-	o.Listener.Close()
+	_ = o.Listener.Close()
 }
 
 func (o *Orderer) Fail() {
@@ -72,7 +78,24 @@ func (o *Orderer) Resurrect() {
 }
 
 func (o *Orderer) ConnCount() int {
-	return int(atomic.LoadUint32(&o.connCount))
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	return int(o.connCount)
+}
+
+func (o *Orderer) SeekInfoContentType() orderer.SeekInfo_SeekContentType {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	return o.contentType
+}
+
+func (o *Orderer) ConnCountType() (int, orderer.SeekInfo_SeekContentType) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	return int(o.connCount), o.contentType
 }
 
 func (o *Orderer) hasFailed() bool {
@@ -92,8 +115,7 @@ func (o *Orderer) SendBlock(seq uint64) {
 }
 
 func (o *Orderer) Deliver(stream orderer.AtomicBroadcast_DeliverServer) error {
-	atomic.AddUint32(&o.connCount, 1)
-	defer atomic.AddUint32(&o.connCount, ^uint32(0))
+
 	envlp, err := stream.Recv()
 	if err != nil {
 		return nil
@@ -101,17 +123,31 @@ func (o *Orderer) Deliver(stream orderer.AtomicBroadcast_DeliverServer) error {
 	if o.hasFailed() {
 		return stream.Send(statusUnavailable())
 	}
+
 	payload := &common.Payload{}
-	proto.Unmarshal(envlp.Payload, payload)
+	_ = proto.Unmarshal(envlp.Payload, payload)
 	seekInfo := &orderer.SeekInfo{}
-	proto.Unmarshal(payload.Data, seekInfo)
+	_ = proto.Unmarshal(payload.Data, seekInfo)
 	assert.True(o.t, seekInfo.Behavior == orderer.SeekInfo_BLOCK_UNTIL_READY)
 	assert.Equal(o.t, atomic.LoadUint64(&o.nextExpectedSeek), seekInfo.Start.GetSpecified().Number)
 
+	o.mutex.Lock()
+	o.connCount++
+	o.contentType = seekInfo.ContentType
+	o.mutex.Unlock()
+
+	defer func() {
+		o.mutex.Lock()
+		o.connCount--
+		o.mutex.Unlock()
+	}()
+
 	for {
 		select {
-		case <-o.stopChan:
+		case _ = <-o.stopChan:
 			return nil
+		case <-stream.Context().Done():
+			return stream.Context().Err()
 		case seq := <-o.blockChannel:
 			if o.hasFailed() {
 				return stream.Send(statusUnavailable())
@@ -119,7 +155,6 @@ func (o *Orderer) Deliver(stream orderer.AtomicBroadcast_DeliverServer) error {
 			o.sendBlock(stream, seq, seekInfo.ContentType)
 		}
 	}
-
 }
 
 func statusUnavailable() *orderer.DeliverResponse {
@@ -146,7 +181,7 @@ func (o *Orderer) sendBlock(stream orderer.AtomicBroadcast_DeliverServer, seq ui
 
 	block.Metadata.Metadata[common.BlockMetadataIndex_SIGNATURES] = []byte("good")
 
-	stream.Send(&orderer.DeliverResponse{
+	_ = stream.Send(&orderer.DeliverResponse{
 		Type: &orderer.DeliverResponse_Block{Block: block},
 	})
 }

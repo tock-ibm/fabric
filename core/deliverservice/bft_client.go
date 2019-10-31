@@ -15,6 +15,7 @@ import (
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/deliverservice/blocksprovider"
+	"github.com/hyperledger/fabric/gossip/util"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/orderer"
 	"github.com/spf13/viper"
@@ -22,13 +23,19 @@ import (
 
 var bftLogger = flogging.MustGetLogger("bftDeliveryClient")
 
-var (
-	bftBaseBackoffDuration = 10 * time.Millisecond
-	bftMaxBackoffDuration  = 10 * time.Second
+const (
+	bftMinBackoffDelay           = 10 * time.Millisecond
+	bftMaxBackoffDelay           = 10 * time.Second
+	bftBlockRcvTotalBackoffDelay = 20 * time.Second
+	bftBlockCensorshipTimeout    = 20 * time.Second
+)
 
-	errNoBlockReceiver = errors.New("no block receiver")
-	errDuplicateBlock  = errors.New("duplicate block")
-	errOutOfOrderBlock = errors.New("out-of-order block")
+var (
+	errNoBlockReceiver        = errors.New("no block receiver")
+	errDuplicateBlock         = errors.New("duplicate block")
+	errOutOfOrderBlock        = errors.New("out-of-order block")
+	errClientClosing          = errors.New("client is closing")
+	errClientReconnectTimeout = errors.New("client reconnect timeout")
 )
 
 //go:generate mockery -dir . -name MessageCryptoVerifier -case underscore -output ./mocks/
@@ -54,8 +61,18 @@ type bftDeliveryClient struct {
 	ledgerInfoProvider blocksprovider.LedgerInfo // provides access to the ledger height
 	msgCryptoVerifier  MessageCryptoVerifier     // verifies headers
 
-	reconnectBackoffThreshold   float64
+	// The total time a bft client tries to connect (to all available endpoints) before giving up leadership
 	reconnectTotalTimeThreshold time.Duration
+	// the total time a block receiver tries to connect before giving up and letting the client to try another
+	// endpoint as a block receiver
+	reconnectBlockRcvTotalTimeThreshold time.Duration
+	// The minimal time between connection retries. This interval grows exponentially until maxBackoffDelay, below.
+	minBackoffDelay time.Duration
+	// The maximal time between connection retries.
+	maxBackoffDelay time.Duration
+	// The block censorship timeout. A block censorship suspicion is declared if more than f header receivers are
+	// ahead of the block receiver for a period larger than this timeout.
+	blockCensorshipTimeout time.Duration
 
 	endpoints          []comm.EndpointCriteria // a set of endpoints
 	blockReceiverIndex int                     // index of the current block receiver endpoint
@@ -76,17 +93,20 @@ func NewBFTDeliveryClient(
 	msgVerifier MessageCryptoVerifier,
 ) *bftDeliveryClient {
 	c := &bftDeliveryClient{
-		stopChan:                    make(chan struct{}, 1),
-		chainID:                     chainID,
-		connectionFactory:           connFactory,
-		createClient:                clFactory,
-		ledgerInfoProvider:          ledgerInfoProvider,
-		msgCryptoVerifier:           msgVerifier,
-		reconnectBackoffThreshold:   getReConnectBackoffThreshold(),
-		reconnectTotalTimeThreshold: getReConnectTotalTimeThreshold(),
-		endpoints:                   comm.Shuffle(endpoints),
-		blockReceiverIndex:          -1,
-		headerReceivers:             make(map[string]*bftHeaderReceiver),
+		stopChan:                            make(chan struct{}, 1),
+		chainID:                             chainID,
+		connectionFactory:                   connFactory,
+		createClient:                        clFactory,
+		ledgerInfoProvider:                  ledgerInfoProvider,
+		msgCryptoVerifier:                   msgVerifier,
+		reconnectTotalTimeThreshold:         getReConnectTotalTimeThreshold(),
+		reconnectBlockRcvTotalTimeThreshold: util.GetDurationOrDefault("peer.deliveryclient.bft.blockRcvTotalBackoffDelay", bftBlockRcvTotalBackoffDelay),
+		minBackoffDelay:                     util.GetDurationOrDefault("peer.deliveryclient.bft.minBackoffDelay", bftMinBackoffDelay),
+		maxBackoffDelay:                     util.GetDurationOrDefault("peer.deliveryclient.bft.maxBackoffDelay", bftMaxBackoffDelay),
+		blockCensorshipTimeout:              util.GetDurationOrDefault("peer.deliveryclient.bft.blockCensorshipTimeout", bftBlockCensorshipTimeout),
+		endpoints:                           comm.Shuffle(endpoints),
+		blockReceiverIndex:                  -1,
+		headerReceivers:                     make(map[string]*bftHeaderReceiver),
 	}
 
 	bftLogger.Infof("[%s] Created BFT Delivery Client", chainID)
@@ -103,76 +123,148 @@ func (c *bftDeliveryClient) Recv() (response *orderer.DeliverResponse, err error
 			return
 		}
 		c.nextBlockNumber = num
+		c.lastBlockTime = time.Now()
 		bftLogger.Debugf("[%s] Starting monitor routine; Initial ledger height: %d", c.chainID, num)
 		go c.monitor()
 	})
 	// can only happen once, after first invocation
 	if err != nil {
+		bftLogger.Debugf("[%s] Exit: error=%v", c.chainID, err)
 		return nil, errors.New("cannot access ledger height")
 	}
 
 	var numEP int
 	var numRetries int
+	var stopRetries = time.Now().Add(c.reconnectTotalTimeThreshold)
 
 	for !c.shouldStop() {
 		if numEP, err = c.assignReceivers(); err != nil {
+			bftLogger.Debugf("[%s] Exit: error=%s", c.chainID, err)
 			return nil, err
 		}
 
-		if err = c.launchHeaderReceivers(); err != nil {
-			return nil, err
-		}
+		c.launchHeaderReceivers()
 
 		response, err = c.receiveBlock()
 		if err == nil {
-			bftLogger.Debugf("[%s] Exit", c.chainID)
+			bftLogger.Debugf("[%s] Exit: response=%v", c.chainID, response)
 			return response, nil // the normal return path
+		}
+
+		if stopRetries.Before(time.Now()) {
+			bftLogger.Debugf("[%s] Exit: reconnectTotalTimeThreshold: %s, expired; error: %s",
+				c.chainID, c.reconnectTotalTimeThreshold, errClientReconnectTimeout)
+			return nil, errClientReconnectTimeout
 		}
 
 		c.closeBlockReceiver()
 		numRetries++
-		if numRetries%numEP == 0 {
-			backoff(2.0, uint(numRetries/numEP), c.stopChan)
+		if numRetries%numEP == 0 { //double the back-off delay on every round of attempts.
+			dur := backOffDuration(2.0, uint(numRetries/numEP), bftMinBackoffDelay, bftMaxBackoffDelay)
+			bftLogger.Debugf("[%s] Got receive error: %s; going to retry another endpoint in: %s", c.chainID, err, dur)
+			backOffSleep(dur, c.stopChan)
+		} else {
+			bftLogger.Debugf("[%s] Got receive error: %s; going to retry another endpoint now", c.chainID, err)
 		}
 	}
 
-	bftLogger.Debugf("[%s] Exit: %v %v", c.chainID, response, err)
-	return response, err
+	bftLogger.Debugf("[%s] Exit: %s", c.chainID, errClientClosing.Error())
+	return nil, errClientClosing
 }
 
-func backoff(base float64, exponent uint, stopChan <-chan struct{}) {
-	var backoffDur time.Duration
-
+func backOffDuration(base float64, exponent uint, minDur, maxDur time.Duration) (backOffDur time.Duration) {
 	if base < 1.0 {
 		base = 1.0
 	}
-	fDur := math.Pow(base, float64(exponent)) * float64(bftBaseBackoffDuration.Nanoseconds())
-	if math.IsInf(fDur, 0) || math.IsNaN(fDur) || fDur > float64(bftMaxBackoffDuration) {
-		backoffDur = bftMaxBackoffDuration
-	} else {
-		backoffDur = time.Duration(int64(fDur))
+	if minDur <= 0 {
+		minDur = time.Duration(1)
+	}
+	if maxDur < minDur {
+		maxDur = minDur
 	}
 
-	backoffTimer := time.After(backoffDur)
+	fDurNano := math.Pow(base, float64(exponent)) * float64(minDur.Nanoseconds())
+	if math.IsInf(fDurNano, 0) || math.IsNaN(fDurNano) || fDurNano > float64(maxDur.Nanoseconds()) {
+		backOffDur = maxDur
+	} else {
+		backOffDur = time.Duration(int64(fDurNano))
+	}
+
+	return backOffDur
+}
+
+func backOffSleep(backOffDur time.Duration, stopChan <-chan struct{}) {
+	backOffTimer := time.NewTimer(backOffDur)
 	select {
-	case <-backoffTimer:
+	case <-backOffTimer.C:
 	case <-stopChan:
 	}
+	backOffTimer.Stop()
 }
 
 // Check block reception progress relative to header reception progress.
 // If the orderer associated with the block receiver is suspected of censorship, replace it with another orderer.
 func (c *bftDeliveryClient) monitor() {
 	bftLogger.Debugf("[%s] Entry", c.chainID)
+
+	ticker := time.NewTicker(bftBlockCensorshipTimeout / 100)
 	for !c.shouldStop() {
-		select {
-		case <-time.After(100 * time.Millisecond):
-		case <-c.stopChan:
+		if suspicion := c.detectBlockCensorship(); suspicion {
+			c.closeBlockReceiver()
+			c.lastBlockTime = time.Now()
 		}
 
-		//TODO
+		select {
+		case <-ticker.C:
+		case <-c.stopChan:
+		}
 	}
+	ticker.Stop()
+
 	bftLogger.Debugf("[%s] Exit", c.chainID)
+}
+
+func (c *bftDeliveryClient) detectBlockCensorship() bool {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if c.blockReceiver == nil {
+		return false
+	}
+
+	now := time.Now()
+	suspicionThreshold := c.lastBlockTime.Add(c.blockCensorshipTimeout)
+	if now.Before(suspicionThreshold) {
+		return false
+	}
+
+	var numAhead int
+	for ep, hRcv := range c.headerReceivers {
+		blockNum, _, err := hRcv.LastBlockNum()
+		if err != nil {
+			continue
+		}
+		if blockNum >= c.nextBlockNumber {
+			bftLogger.Debugf("[%s] header receiver: %s, is ahead of block receiver, headr-rcv=%d, block-rcv=%d", c.chainID, ep, blockNum, c.nextBlockNumber-1)
+			numAhead++
+		}
+	}
+
+	numEP := uint64(len(c.endpoints))
+	_, f := computeQuorum(numEP)
+	if numAhead > f {
+		bftLogger.Debugf("[%s] suspected block censorship: %d header receivers are ahead of block receiver, out of %d endpoints",
+			c.chainID, numAhead, numEP)
+		return true
+	}
+
+	return false
+}
+
+func computeQuorum(N uint64) (Q int, F int) {
+	F = int((int(N) - 1) / 3)
+	Q = int(math.Ceil((float64(N) + float64(F) + 1) / 2.0))
+	return
 }
 
 // (re)-assign a block delivery client and header delivery clients
@@ -191,6 +283,7 @@ func (c *bftDeliveryClient) assignReceivers() (int, error) {
 		if headerReceiver, exists := c.headerReceivers[ep.Endpoint]; exists {
 			headerReceiver.Close()
 			delete(c.headerReceivers, ep.Endpoint)
+			bftLogger.Debugf("[%s] Closed header receiver to: %s", c.chainID, ep.Endpoint)
 		}
 		c.blockReceiver = c.newBlockClient(ep)
 		bftLogger.Debugf("[%s] Created block receiver to: %s", c.chainID, ep.Endpoint)
@@ -223,20 +316,20 @@ func (c *bftDeliveryClient) assignReceivers() (int, error) {
 	return numEP, nil
 }
 
-func (c *bftDeliveryClient) launchHeaderReceivers() error { //TODO do we need the error?
+func (c *bftDeliveryClient) launchHeaderReceivers() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	var launched int
 	for ep, hRcv := range c.headerReceivers {
 		if !hRcv.isStarted() {
 			bftLogger.Debugf("[%s] launching a header receiver to endpoint: %s", c.chainID, ep)
+			launched++
 			go hRcv.DeliverHeaders()
 		}
 	}
 
-	bftLogger.Debugf("[%s] launched %d header receivers", c.chainID, len(c.headerReceivers))
-
-	return nil
+	bftLogger.Debugf("[%s] header receivers: launched=%d, total running=%d ", c.chainID, launched, len(c.headerReceivers))
 }
 
 func (c *bftDeliveryClient) receiveBlock() (*orderer.DeliverResponse, error) {
@@ -292,12 +385,11 @@ func (c *bftDeliveryClient) newBlockClient(endpoint comm.EndpointCriteria) *broa
 		return requester.RequestBlocks(c.ledgerInfoProvider)
 	}
 	backoffPolicy := func(attemptNum int, elapsedTime time.Duration) (time.Duration, bool) {
-		if elapsedTime >= c.reconnectTotalTimeThreshold {
+		//Let block receivers give-up early so we can replace them with a header receiver
+		if elapsedTime >= c.reconnectBlockRcvTotalTimeThreshold {
 			return 0, false
 		}
-		sleepIncrement := float64(time.Millisecond * 500)
-		attempt := float64(attemptNum)
-		return time.Duration(math.Min(math.Pow(2, attempt)*sleepIncrement, c.reconnectBackoffThreshold)), true
+		return backOffDuration(2.0, uint(attemptNum), c.minBackoffDelay, c.maxBackoffDelay), true
 	}
 	//Only a single endpoint
 	connProd := comm.NewConnectionProducer(c.connectionFactory, []comm.EndpointCriteria{endpoint})
@@ -316,12 +408,10 @@ func (c *bftDeliveryClient) newHeaderClient(endpoint comm.EndpointCriteria) *bro
 		return requester.RequestHeaders(c.ledgerInfoProvider)
 	}
 	backoffPolicy := func(attemptNum int, elapsedTime time.Duration) (time.Duration, bool) {
-		if elapsedTime >= c.reconnectTotalTimeThreshold {
+		if elapsedTime >= c.reconnectTotalTimeThreshold { // Let header receivers continue to try until we close them
 			return 0, false
 		}
-		sleepIncrement := float64(time.Millisecond * 500)
-		attempt := float64(attemptNum)
-		return time.Duration(math.Min(math.Pow(2, attempt)*sleepIncrement, c.reconnectBackoffThreshold)), true
+		return backOffDuration(2.0, uint(attemptNum), c.minBackoffDelay, c.maxBackoffDelay), true
 	}
 	//Only a single endpoint
 	connProd := comm.NewConnectionProducer(c.connectionFactory, []comm.EndpointCriteria{endpoint})
@@ -378,6 +468,7 @@ func (c *bftDeliveryClient) UpdateReceived(blockNumber uint64) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	bftLogger.Debugf("[%s] received blockNumber=%d", c.chainID, blockNumber)
 	c.nextBlockNumber = blockNumber + 1
 	c.lastBlockTime = time.Now()
 }
@@ -391,4 +482,17 @@ func (c *bftDeliveryClient) shouldStop() bool {
 	defer c.mutex.Unlock()
 
 	return c.stopFlag
+}
+
+// GetEndpoint provides the endpoint of the ordering service server that delivers
+// blocks (as opposed to headers) to this delivery client.
+func (c *bftDeliveryClient) GetEndpoint() string {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if c.blockReceiver == nil {
+		return ""
+	}
+
+	return c.blockReceiver.GetEndpoint()
 }

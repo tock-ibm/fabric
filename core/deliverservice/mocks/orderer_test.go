@@ -17,6 +17,7 @@ limitations under the License.
 package mocks
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ type clStream struct {
 func (cs *clStream) Send(*orderer.DeliverResponse) error {
 	return nil
 }
+
 func (cs *clStream) Recv() (*common.Envelope, error) {
 	seekInfo := &orderer.SeekInfo{
 		Start:    &orderer.SeekPosition{Type: &orderer.SeekPosition_Specified{Specified: &orderer.SeekSpecified{Number: 0}}},
@@ -50,6 +52,10 @@ func (cs *clStream) Recv() (*common.Envelope, error) {
 	}
 	e := &common.Envelope{Payload: b}
 	return e, nil
+}
+
+func (cs *clStream) Context() context.Context {
+	return context.Background()
 }
 
 func TestOrderer(t *testing.T) {

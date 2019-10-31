@@ -48,8 +48,8 @@ func staticRootsEnabled() bool {
 	return viper.GetBool("peer.deliveryclient.staticRootsEnabled")
 }
 
-func isBFTClient() bool {
-	return viper.GetBool("peer.deliveryclient.bft")
+func isBFTClientEnabled() bool {
+	return viper.GetBool("peer.deliveryclient.bft.enabled")
 }
 
 // DeliverService used to communicate with orderers to obtain
@@ -84,6 +84,7 @@ type deliverServiceImpl struct {
 
 type endpointUpdater interface {
 	UpdateEndpoints(endpoints []comm.EndpointCriteria)
+	GetEndpoint() string
 }
 
 type deliverClient struct {
@@ -169,6 +170,9 @@ func NewDeliverService(conf *Config, connConfig ConnectionCriteria) (*deliverSer
 }
 
 func (d *deliverServiceImpl) UpdateEndpoints(chainID string, connCriteria ConnectionCriteria) error {
+	d.lock.RLock()
+	defer d.lock.RUnlock()
+
 	// Use chainID to obtain blocks provider and pass endpoints
 	// for update
 	if dc, ok := d.deliverClients[chainID]; ok {
@@ -177,6 +181,17 @@ func (d *deliverServiceImpl) UpdateEndpoints(chainID string, connCriteria Connec
 		return nil
 	}
 	return errors.New(fmt.Sprintf("Channel with %s id was not found", chainID))
+}
+
+func (d *deliverServiceImpl) GetEndpoint(chainID string) string {
+	d.lock.RLock()
+	defer d.lock.RUnlock()
+
+	if dc, ok := d.deliverClients[chainID]; ok {
+		return dc.bclient.GetEndpoint()
+	}
+
+	return ""
 }
 
 func (d *deliverServiceImpl) validateConfiguration() error {
@@ -215,7 +230,7 @@ func (d *deliverServiceImpl) StartDeliverForChannel(chainID string, ledgerInfo b
 		logger.Errorf(errMsg)
 		return errors.New(errMsg)
 	} else {
-		if !isBFTClient() {
+		if !isBFTClientEnabled() {
 			client := d.newClient(chainID, ledgerInfo)
 			logger.Debug("This peer will pass blocks from ordering service to other peers for channel", chainID)
 			d.deliverClients[chainID] = &deliverClient{

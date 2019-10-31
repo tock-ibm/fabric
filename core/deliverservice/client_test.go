@@ -469,24 +469,39 @@ func TestCloseWhileRecv(t *testing.T) {
 	// the connection is closed.
 	// The Recv should return immediately in such a case
 	fakeOrderer := mocks.NewOrderer(5611, t)
-	time.Sleep(time.Second)
+	fakeOrderer.SetNextExpectedSeek(5)
 	defer fakeOrderer.Shutdown()
+
+	time.Sleep(time.Second)
 	cp := &connProducer{ordererEndpoint: "localhost:5611"}
 	clFactory := func(conn *grpc.ClientConn) orderer.AtomicBroadcastClient {
 		return orderer.NewAtomicBroadcastClient(conn)
 	}
 
-	setup := func(blocksprovider.BlocksDeliverer) error {
-		return nil
+	requester := &blocksRequester{
+		tls:     false,
+		chainID: "TEST_CHAIN",
+	}
+	mockLedgerInfo := &mocks.LedgerInfo{}
+	mockLedgerInfo.On("LedgerHeight").Return(uint64(5), nil)
+	broadcastSetup := func(bd blocksprovider.BlocksDeliverer) error {
+		return requester.RequestBlocks(mockLedgerInfo)
 	}
 	backoffStrategy := func(attemptNum int, elapsedTime time.Duration) (time.Duration, bool) {
 		return 0, true
 	}
-	bc := NewBroadcastClient(cp, clFactory, setup, backoffStrategy)
+
+	bc := NewBroadcastClient(cp, clFactory, broadcastSetup, backoffStrategy)
+	requester.client = bc
+
 	var flag int32
 	go func() {
-		for fakeOrderer.ConnCount() == 0 {
+		for i := 0; fakeOrderer.ConnCount() == 0; i++ {
 			time.Sleep(time.Second)
+			if i > 10 {
+				assert.Fail(t, "no connection")
+				break
+			}
 		}
 		atomic.StoreInt32(&flag, int32(1))
 		bc.Close()
@@ -609,11 +624,15 @@ func TestDisconnect(t *testing.T) {
 	defer os2.Shutdown()
 
 	waitForConnectionToSomeOSN := func() {
-		for {
+		for i := 0; ; i++ {
 			if os1.ConnCount() > 0 || os2.ConnCount() > 0 {
 				return
 			}
 			time.Sleep(time.Millisecond * 100)
+			if i > 100 {
+				assert.Fail(t, "no connection")
+				break
+			}
 		}
 	}
 
@@ -627,14 +646,23 @@ func TestDisconnect(t *testing.T) {
 	clFact := func(cc *grpc.ClientConn) orderer.AtomicBroadcastClient {
 		return orderer.NewAtomicBroadcastClient(cc)
 	}
-	onConnect := func(bd blocksprovider.BlocksDeliverer) error {
-		return nil
+
+	requester := &blocksRequester{
+		tls:     false,
+		chainID: "TEST_CHAIN",
+	}
+	mockLedgerInfo := &mocks.LedgerInfo{}
+	mockLedgerInfo.On("LedgerHeight").Return(uint64(5), nil)
+	broadcastSetup := func(bd blocksprovider.BlocksDeliverer) error {
+		return requester.RequestBlocks(mockLedgerInfo)
 	}
 	retryPol := func(attemptNum int, elapsedTime time.Duration) (time.Duration, bool) {
 		return time.Millisecond * 10, attemptNum < 100
 	}
 
-	cl := NewBroadcastClient(prod, clFact, onConnect, retryPol)
+	cl := NewBroadcastClient(prod, clFact, broadcastSetup, retryPol)
+	requester.client = cl
+
 	stopChan := make(chan struct{})
 	go func() {
 		cl.Recv()
