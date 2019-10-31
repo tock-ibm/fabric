@@ -150,7 +150,9 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 	selfID, err := c.detectSelfID(m.Consenters)
 	if err != nil {
 		// TODO: Add inactive channel tracker
-		return &inactive.Chain{Err: errors.Errorf("channel %s is not serviced by me", support.ChainID())}, nil
+		errNotServiced := fmt.Sprintf("channel %s is not serviced by me", support.ChainID())
+		c.Logger.Errorf(errNotServiced)
+		return &inactive.Chain{Err: errors.Errorf(errNotServiced)}, nil
 	}
 	c.Logger.Infof("Local consenter id is %d", selfID)
 

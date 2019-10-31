@@ -7,17 +7,17 @@ SPDX-License-Identifier: Apache-2.0
 package smartbft
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"time"
-
-	"encoding/base64"
 
 	smartbft "github.com/SmartBFT-Go/consensus/pkg/consensus"
 	"github.com/SmartBFT-Go/consensus/pkg/types"
 	"github.com/SmartBFT-Go/consensus/pkg/wal"
 	"github.com/SmartBFT-Go/consensus/smartbftprotos"
 	"github.com/gogo/protobuf/proto"
+	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/policies"
 	"github.com/hyperledger/fabric/core/policy"
@@ -27,6 +27,7 @@ import (
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/msp"
+	protossmartbft "github.com/hyperledger/fabric/protos/orderer/smartbft"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -410,13 +411,21 @@ func (c *BFTChain) blockToDecision(block *common.Block) *types.Decision {
 
 	proposal.Metadata = ordererMDFromBlock.ConsenterMetadata
 
+	id2Identities := c.ID2Identities
+	// if this block is a config block (and not genesis block)
+	// then use the identities from the previous config block
+	if protoutil.IsConfigBlock(block) && block.Header.Number != 0 {
+		prev := PreviousConfigBlockFromLedgerOrPanic(c.support, c.Logger)
+		id2Identities = c.blockToID2Identities(prev)
+	}
+
 	var signatures []types.Signature
 	for _, sigMD := range signatureMetadata.Signatures {
 		sigHdr := &common.SignatureHeader{}
 		if err := proto.Unmarshal(sigMD.SignatureHeader, sigHdr); err != nil {
 			c.Logger.Panicf("Failed unmarshaling signature header: %v", err)
 		}
-		id, found := c.ID2Identities.IdentityToID(sigHdr.Creator)
+		id, found := id2Identities.IdentityToID(sigHdr.Creator)
 		if !found {
 			c.Logger.Panicf("Didn't find identity corresponding to %s", string(sigHdr.Creator))
 		}
@@ -436,6 +445,30 @@ func (c *BFTChain) blockToDecision(block *common.Block) *types.Decision {
 		Signatures: signatures,
 		Proposal:   proposal,
 	}
+}
+
+func (c *BFTChain) blockToID2Identities(block *common.Block) NodeIdentitiesByID {
+	env := &common.Envelope{}
+	if err := proto.Unmarshal(block.Data.Data[0], env); err != nil {
+		c.Logger.Panicf("Failed unmarshaling envelope of previous config block: %v", err)
+	}
+	bundle, err := channelconfig.NewBundleFromEnvelope(env)
+	if err != nil {
+		c.Logger.Panicf("Failed getting a new bundle from envelope of previous config block: %v", err)
+	}
+	oc, _ := bundle.OrdererConfig()
+	if oc == nil {
+		c.Logger.Panicf("Orderer config of previous config block is nil")
+	}
+	m := &protossmartbft.ConfigMetadata{}
+	if err := proto.Unmarshal(oc.ConsensusMetadata(), m); err != nil {
+		c.Logger.Panicf("Failed to unmarshal consensus metadata: %v", err)
+	}
+	id2Identies := map[uint64][]byte{}
+	for _, consenter := range m.Consenters {
+		id2Identies[consenter.ConsenterId] = SanitizeIdentity(consenter.Identity, c.Logger)
+	}
+	return id2Identies
 }
 
 type chainACL struct {
