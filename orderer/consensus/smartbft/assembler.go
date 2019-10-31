@@ -132,6 +132,27 @@ func lastConfigBlockFromLedger(ledger Ledger) (*common.Block, error) {
 	return lastConfigBlock, nil
 }
 
+func PreviousConfigBlockFromLedgerOrPanic(ledger Ledger, logger PanicLogger) *common.Block {
+	block, err := previousConfigBlockFromLedger(ledger)
+	if err != nil {
+		logger.Panicf("Failed retrieving previous config block: %v", err)
+	}
+	return block
+}
+
+func previousConfigBlockFromLedger(ledger Ledger) (*common.Block, error) {
+	previousBlockSeq := ledger.Height() - 2
+	previousBlock := ledger.Block(previousBlockSeq)
+	if previousBlock == nil {
+		return nil, errors.Errorf("unable to retrieve block [%d]", previousBlockSeq)
+	}
+	previousConfigBlock, err := cluster.LastConfigBlock(previousBlock, ledger)
+	if err != nil {
+		return nil, err
+	}
+	return previousConfigBlock, nil
+}
+
 func LastBlockFromLedgerOrPanic(ledger Ledger, logger PanicLogger) *common.Block {
 	lastBlockSeq := ledger.Height() - 1
 	lastBlock := ledger.Block(lastBlockSeq)
