@@ -156,3 +156,7 @@ type MockLedgerInfo struct {
 func (li *MockLedgerInfo) LedgerHeight() (uint64, error) {
 	return atomic.LoadUint64(&li.Height), nil
 }
+
+func (li *MockLedgerInfo) Set(height uint64) {
+	atomic.StoreUint64(&li.Height, height)
+}
