@@ -12,12 +12,10 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
-
 	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/deliverservice/blocksprovider"
 	"github.com/hyperledger/fabric/core/deliverservice/mocks"
@@ -207,7 +205,7 @@ func TestDeliverServiceRestart(t *testing.T) {
 			os.Shutdown()
 			time.Sleep(time.Second * 3)
 			os = mocks.NewOrderer(5611, t)
-			atomic.StoreUint64(&li.Height, uint64(103))
+			li.Set(103)
 			os.SetNextExpectedSeek(uint64(103))
 			go os.SendBlock(uint64(103))
 			assertBlockDissemination(103, gossipServiceAdapter.GossipBlockDisseminations, t)
@@ -221,13 +219,10 @@ func TestDeliverServiceFailover(t *testing.T) {
 	bftOpt := []bool{false, true}
 	for _, isBFT := range bftOpt {
 		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
-			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
 			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
 			viper.Set("peer.deliveryclient.bft.blockRcvTotalBackoffDelay", time.Second)
 			viper.Set("peer.deliveryclient.connTimeout", 100*time.Millisecond)
-
 			defer viper.Reset()
-
 			defer ensureNoGoroutineLeak(t)()
 			// Scenario: bring up 2 ordering service instances,
 			// and shut down the instance that the client has connected to.
@@ -261,22 +256,13 @@ func TestDeliverServiceFailover(t *testing.T) {
 			assert.NoError(t, err, "can't start delivery")
 
 			// We need to discover to which instance the client connected to
-			var count1, count2 int
-			var info1, info2 orderer.SeekInfo_SeekContentType
-			for {
-				count1, info1 = os1.ConnCountType()
-				count2, info2 = os2.ConnCountType()
-				if isBFT && count1 > 0 && count2 > 0 {
-					break
-				} else if !isBFT && (count1 > 0 || count2 > 0) {
-					break
-				}
-
-				time.Sleep(time.Millisecond)
-			}
+			inst1, inst2, err := detectOSNConnections(isBFT, os1, os2)
+			assert.NoError(t, err, "no connections")
+			logger.Infof("TEST: first OSN : %s", inst1.Addr().String())
+			logger.Infof("TEST: second OSN: %s", inst2.Addr().String())
 
 			blockEP := service.GetEndpoint("TEST_CHAINID")
-			logger.Infof("TEST: block receiver #1 endpoint=%s, type-os1=%s, type-os2=%s", blockEP, info1, info2)
+			logger.Infof("TEST: block receiver #1 endpoint=%s", blockEP)
 
 			var instance2fail, instance2failSecond *mocks.Orderer
 			var reincarnatedNodePort int
@@ -291,12 +277,15 @@ func TestDeliverServiceFailover(t *testing.T) {
 				reincarnatedNodePort = 5613
 			}
 
+			assert.Equal(t, inst1.Addr().String(), instance2fail.Addr().String())
+			assert.Equal(t, inst2.Addr().String(), instance2failSecond.Addr().String())
+
 			go instance2fail.SendBlock(uint64(100))
 			assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
 
-			atomic.StoreUint64(&li.Height, uint64(101))
-			os1.SetNextExpectedSeek(uint64(101))
-			os2.SetNextExpectedSeek(uint64(101))
+			li.Set(101)
+			os1.SetNextExpectedSeek(101)
+			os2.SetNextExpectedSeek(101)
 
 			// Fail the orderer node the client is connected to
 			instance2fail.Shutdown()
@@ -306,9 +295,9 @@ func TestDeliverServiceFailover(t *testing.T) {
 			logger.Infof("TEST: block receiver #2 endpoint=%s", blockEP2)
 
 			// Ensure the client asks blocks from the other ordering service node
-			go instance2failSecond.SendBlock(uint64(101))
+			go instance2failSecond.SendBlock(101)
 			assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
-			atomic.StoreUint64(&li.Height, uint64(102))
+			li.Set(102)
 
 			// Now shut down the 2nd node
 			instance2failSecond.Shutdown()
@@ -324,51 +313,8 @@ func TestDeliverServiceFailover(t *testing.T) {
 			go os.SendBlock(uint64(102))
 			assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
 
-			service.Stop()
 			os.Shutdown()
-
-			//===
-			//instance2fail := os1
-			//reincarnatedNodePort := 5612
-			//instance2failSecond := os2
-			//select {
-			//case seq := <-gossipServiceAdapter.GossipBlockDisseminations:
-			//	assert.Equal(t, uint64(100), seq)
-			//case <-time.After(time.Second * 2):
-			//	// Shutdown first instance and replace it, in order to make an instance
-			//	// with an empty sending channel
-			//	os1.Shutdown()
-			//	time.Sleep(time.Second)
-			//	os1 = mocks.NewOrderer(5612, t)
-			//	instance2fail = os2
-			//	instance2failSecond = os1
-			//	reincarnatedNodePort = 5613
-			//	// Ensure we really are connected to the second instance,
-			//	// by making it send a block
-			//	go os2.SendBlock(uint64(100))
-			//	assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
-			//}
-			//
-			//atomic.StoreUint64(&li.Height, uint64(101))
-			//os1.SetNextExpectedSeek(uint64(101))
-			//os2.SetNextExpectedSeek(uint64(101))
-			//// Fail the orderer node the client is connected to
-			//instance2fail.Shutdown()
-			//time.Sleep(time.Second)
-			//// Ensure the client asks blocks from the other ordering service node
-			//go instance2failSecond.SendBlock(uint64(101))
-			//assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
-			//atomic.StoreUint64(&li.Height, uint64(102))
-			//// Now shut down the 2nd node
-			//instance2failSecond.Shutdown()
-			//time.Sleep(time.Second * 1)
-			//// Bring up the first one
-			//os := mocks.NewOrderer(reincarnatedNodePort, t)
-			//os.SetNextExpectedSeek(102)
-			//go os.SendBlock(uint64(102))
-			//assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
-			//os.Shutdown()
-			//service.Stop()
+			service.Stop()
 		})
 	}
 }
@@ -419,272 +365,320 @@ func TestDeliverServiceUpdateEndpoints(t *testing.T) {
 }
 
 func TestDeliverServiceServiceUnavailable(t *testing.T) {
-	orgEndpointDisableInterval := comm.EndpointDisableInterval
-	comm.EndpointDisableInterval = time.Millisecond * 1500
-	defer func() { comm.EndpointDisableInterval = orgEndpointDisableInterval }()
-	defer ensureNoGoroutineLeak(t)()
-	// Scenario: bring up 2 ordering service instances,
-	// Make the instance the client connects to fail after a delivery of a block and send SERVICE_UNAVAILABLE
-	// whenever subsequent seeks are sent to it.
-	// The client is expected to connect to the other instance, and to ask for a block sequence that is the next block
-	// after the last block it got from the first ordering service node.
-	// Wait endpoint disable interval
-	// After that resurrect failed node (first node) and fail instance client currently connect - send SERVICE_UNAVAILABLE
-	// The client should reconnect to original instance and ask for next block.
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			viper.Set("peer.deliveryclient.bft.blockRcvTotalBackoffDelay", time.Second)
+			viper.Set("peer.deliveryclient.connTimeout", 100*time.Millisecond)
 
-	os1 := mocks.NewOrderer(5615, t)
-	os2 := mocks.NewOrderer(5616, t)
+			defer viper.Reset()
 
-	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+			orgEndpointDisableInterval := comm.EndpointDisableInterval
+			comm.EndpointDisableInterval = time.Millisecond * 1500
+			defer func() { comm.EndpointDisableInterval = orgEndpointDisableInterval }()
+			defer ensureNoGoroutineLeak(t)()
+			// Scenario: bring up 2 ordering service instances,
+			// Make the instance the client connects to fail after a delivery of a block and send SERVICE_UNAVAILABLE
+			// whenever subsequent seeks are sent to it.
+			// The client is expected to connect to the other instance, and to ask for a block sequence that is the next block
+			// after the last block it got from the first ordering service node.
+			// Wait endpoint disable interval
+			// After that resurrect failed node (first node) and fail instance client currently connect - send SERVICE_UNAVAILABLE
+			// The client should reconnect to original instance and ask for next block.
 
-	service, err := NewDeliverService(&Config{
-		Gossip:      gossipServiceAdapter,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, ConnectionCriteria{
-		Organizations: []string{"org"},
-		OrdererEndpointsByOrg: map[string][]string{
-			"org": {"localhost:5615", "localhost:5616"},
-		},
-	})
-	assert.NoError(t, err)
-	li := &mocks.MockLedgerInfo{Height: 100}
-	os1.SetNextExpectedSeek(li.Height)
-	os2.SetNextExpectedSeek(li.Height)
+			os1 := mocks.NewOrderer(5615, t)
+			os2 := mocks.NewOrderer(5616, t)
 
-	err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
-	assert.NoError(t, err, "can't start delivery")
+			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
 
-	waitForConnectionToSomeOSN := func() (*mocks.Orderer, *mocks.Orderer) {
-		for {
-			if os1.ConnCount() > 0 {
-				return os1, os2
-			}
-			if os2.ConnCount() > 0 {
-				return os2, os1
-			}
-			time.Sleep(time.Millisecond * 100)
-		}
+			service, err := NewDeliverService(&Config{
+				Gossip:      gossipServiceAdapter,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, ConnectionCriteria{
+				Organizations: []string{"org"},
+				OrdererEndpointsByOrg: map[string][]string{
+					"org": {"localhost:5615", "localhost:5616"},
+				},
+			})
+			assert.NoError(t, err)
+			var base uint64 = 100
+			li := &mocks.MockLedgerInfo{Height: base}
+			os1.SetNextExpectedSeek(base)
+			os2.SetNextExpectedSeek(base)
+
+			err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
+			assert.NoError(t, err, "can't start delivery")
+
+			activeInstance, backupInstance, err := detectOSNConnections(isBFT, os1, os2)
+			assert.NoError(t, err, "no connections")
+			logger.Infof("TEST: first OSN: %s", activeInstance.Addr().String())
+			logger.Infof("TEST: second OSN: %s", backupInstance.Addr().String())
+
+			blockEP := service.GetEndpoint("TEST_CHAINID")
+			logger.Infof("TEST: block receiver #1 endpoint=%s", blockEP)
+
+			assert.NotNil(t, activeInstance)
+			assert.NotNil(t, backupInstance)
+
+			// Send first block
+			go activeInstance.SendBlock(base)
+
+			assertBlockDissemination(base, gossipServiceAdapter.GossipBlockDisseminations, t)
+			li.Set(base + 1)
+
+			// Backup instance should expect a seek of 101 since we got 100
+			backupInstance.SetNextExpectedSeek(base + 1)
+
+			// Fail instance delivery client connected to
+			activeInstance.Fail()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			wg := sync.WaitGroup{}
+			wg.Add(1)
+
+			go func(ctx context.Context) {
+				defer wg.Done()
+				for {
+					select {
+					case <-time.After(time.Millisecond * 100):
+						cCount, cType := backupInstance.ConnCountType()
+						if cCount > 0 && cType == orderer.SeekInfo_BLOCK {
+							return
+						}
+					case <-ctx.Done():
+						return
+					}
+				}
+			}(ctx)
+
+			wg.Wait()
+			assert.NoError(t, ctx.Err(), "Delivery client has not failed over to alive ordering service")
+			// Check that delivery client was indeed connected
+			assert.Equal(t, backupInstance.ConnCount(), 1)
+			blockEP2 := service.GetEndpoint("TEST_CHAINID")
+			logger.Infof("TEST: block receiver #2 endpoint=%s", blockEP2)
+			assert.NotEqual(t, blockEP, blockEP2)
+			// Have backup instance prepare to send a block
+			backupInstance.SendBlock(base + 1)
+			// Ensure the client asks blocks from the other ordering service node
+			assertBlockDissemination(base+1, gossipServiceAdapter.GossipBlockDisseminations, t)
+
+			// Wait until first endpoint enabled again
+			time.Sleep(time.Millisecond * 1600)
+
+			li.Set(base + 2)
+			activeInstance.Resurrect()
+			backupInstance.Fail()
+
+			resurrectCtx, resCancel := context.WithTimeout(context.Background(), time.Second)
+			defer resCancel()
+
+			go func() {
+				// Resurrected instance should expect a seek of 102 since we got 101
+				activeInstance.SetNextExpectedSeek(base + 2)
+				// Have resurrected instance prepare to send a block
+				activeInstance.SendBlock(base + 2)
+
+			}()
+
+			reswg := sync.WaitGroup{}
+			reswg.Add(1)
+
+			go func() {
+				defer reswg.Done()
+				for {
+					select {
+					case <-time.After(time.Millisecond * 100):
+						if activeInstance.ConnCount() > 0 {
+							return
+						}
+					case <-resurrectCtx.Done():
+						return
+					}
+				}
+			}()
+
+			reswg.Wait()
+
+			assert.NoError(t, resurrectCtx.Err(), "Delivery client has not failed over to alive ordering service")
+			// Check that delivery client was indeed connected
+			assert.Equal(t, activeInstance.ConnCount(), 1)
+			blockEP3 := service.GetEndpoint("TEST_CHAINID")
+			logger.Infof("TEST: block receiver #3 endpoint=%s", blockEP3)
+			assert.Equal(t, blockEP, blockEP3)
+			// Ensure the client asks blocks from the other ordering service node
+			assertBlockDissemination(base+2, gossipServiceAdapter.GossipBlockDisseminations, t)
+
+			// Cleanup
+			os1.Shutdown()
+			os2.Shutdown()
+			service.Stop()
+		})
 	}
-
-	activeInstance, backupInstance := waitForConnectionToSomeOSN()
-	assert.NotNil(t, activeInstance)
-	assert.NotNil(t, backupInstance)
-	// Check that delivery client get connected to active
-	assert.Equal(t, activeInstance.ConnCount(), 1)
-	// and not connected to backup instances
-	assert.Equal(t, backupInstance.ConnCount(), 0)
-
-	// Send first block
-	go activeInstance.SendBlock(li.Height)
-
-	assertBlockDissemination(li.Height, gossipServiceAdapter.GossipBlockDisseminations, t)
-	li.Height++
-
-	// Backup instance should expect a seek of 101 since we got 100
-	backupInstance.SetNextExpectedSeek(li.Height)
-	// Have backup instance prepare to send a block
-	backupInstance.SendBlock(li.Height)
-
-	// Fail instance delivery client connected to
-	activeInstance.Fail()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func(ctx context.Context) {
-		defer wg.Done()
-		for {
-			select {
-			case <-time.After(time.Millisecond * 100):
-				if backupInstance.ConnCount() > 0 {
-					return
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}(ctx)
-
-	wg.Wait()
-	assert.NoError(t, ctx.Err(), "Delivery client has not failed over to alive ordering service")
-	// Check that delivery client was indeed connected
-	assert.Equal(t, backupInstance.ConnCount(), 1)
-	// Ensure the client asks blocks from the other ordering service node
-	assertBlockDissemination(li.Height, gossipServiceAdapter.GossipBlockDisseminations, t)
-
-	// Wait until first endpoint enabled again
-	time.Sleep(time.Millisecond * 1600)
-
-	li.Height++
-	activeInstance.Resurrect()
-	backupInstance.Fail()
-
-	resurrectCtx, resCancel := context.WithTimeout(context.Background(), time.Second)
-	defer resCancel()
-
-	go func() {
-		// Resurrected instance should expect a seek of 102 since we got 101
-		activeInstance.SetNextExpectedSeek(li.Height)
-		// Have resurrected instance prepare to send a block
-		activeInstance.SendBlock(li.Height)
-
-	}()
-
-	reswg := sync.WaitGroup{}
-	reswg.Add(1)
-
-	go func() {
-		defer reswg.Done()
-		for {
-			select {
-			case <-time.After(time.Millisecond * 100):
-				if activeInstance.ConnCount() > 0 {
-					return
-				}
-			case <-resurrectCtx.Done():
-				return
-			}
-		}
-	}()
-
-	reswg.Wait()
-
-	assert.NoError(t, resurrectCtx.Err(), "Delivery client has not failed over to alive ordering service")
-	// Check that delivery client was indeed connected
-	assert.Equal(t, activeInstance.ConnCount(), 1)
-	// Ensure the client asks blocks from the other ordering service node
-	assertBlockDissemination(li.Height, gossipServiceAdapter.GossipBlockDisseminations, t)
-
-	// Cleanup
-	os1.Shutdown()
-	os2.Shutdown()
-	service.Stop()
 }
 
 func TestDeliverServiceAbruptStop(t *testing.T) {
-	defer ensureNoGoroutineLeak(t)()
-	// Scenario: The deliver service is started and abruptly stopped.
-	// The block provider instance is run in a separate goroutine, and thus
-	// it might be scheduled after the deliver client is stopped.
-	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
-	service, err := NewDeliverService(&Config{
-		Gossip:      gossipServiceAdapter,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, ConnectionCriteria{
-		Organizations: []string{"org"},
-		OrdererEndpointsByOrg: map[string][]string{
-			"org": {"a"},
-		},
-	})
-	assert.NoError(t, err)
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			defer viper.Reset()
+			defer ensureNoGoroutineLeak(t)()
+			// Scenario: The deliver service is started and abruptly stopped.
+			// The block provider instance is run in a separate goroutine, and thus
+			// it might be scheduled after the deliver client is stopped.
+			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+			service, err := NewDeliverService(&Config{
+				Gossip:      gossipServiceAdapter,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, ConnectionCriteria{
+				Organizations: []string{"org"},
+				OrdererEndpointsByOrg: map[string][]string{
+					"org": {"a"},
+				},
+			})
+			assert.NoError(t, err)
 
-	li := &mocks.MockLedgerInfo{Height: uint64(100)}
-	service.StartDeliverForChannel("mychannel", li, func() {})
-	service.StopDeliverForChannel("mychannel")
+			li := &mocks.MockLedgerInfo{Height: uint64(100)}
+			service.StartDeliverForChannel("mychannel", li, func() {})
+			service.StopDeliverForChannel("mychannel")
+		})
+	}
 }
 
 func TestDeliverServiceShutdown(t *testing.T) {
-	defer ensureNoGoroutineLeak(t)()
 	// Scenario: Launch an ordering service node and let the client pull some blocks.
 	// Then, shut down the client, and check that it is no longer fetching blocks.
-	os := mocks.NewOrderer(5614, t)
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			defer viper.Reset()
+			defer ensureNoGoroutineLeak(t)()
 
-	time.Sleep(time.Second)
-	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+			os := mocks.NewOrderer(5614, t)
 
-	service, err := NewDeliverService(&Config{
-		Gossip:      gossipServiceAdapter,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, ConnectionCriteria{
-		Organizations: []string{"org"},
-		OrdererEndpointsByOrg: map[string][]string{
-			"org": {"localhost:5614"},
-		},
-	})
-	assert.NoError(t, err)
+			time.Sleep(time.Second)
+			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
 
-	li := &mocks.MockLedgerInfo{Height: uint64(100)}
-	os.SetNextExpectedSeek(uint64(100))
-	err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
-	assert.NoError(t, err, "can't start delivery")
+			service, err := NewDeliverService(&Config{
+				Gossip:      gossipServiceAdapter,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, ConnectionCriteria{
+				Organizations: []string{"org"},
+				OrdererEndpointsByOrg: map[string][]string{
+					"org": {"localhost:5614"},
+				},
+			})
+			assert.NoError(t, err)
 
-	// Check that delivery service requests blocks in order
-	go os.SendBlock(uint64(100))
-	assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
-	go os.SendBlock(uint64(101))
-	assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
-	atomic.StoreUint64(&li.Height, uint64(102))
-	os.SetNextExpectedSeek(uint64(102))
-	// Now stop the delivery service and make sure we don't disseminate a block
-	service.Stop()
-	go os.SendBlock(uint64(102))
-	select {
-	case <-gossipServiceAdapter.GossipBlockDisseminations:
-		assert.Fail(t, "Disseminated a block after shutting down the delivery service")
-	case <-time.After(time.Second * 2):
+			li := &mocks.MockLedgerInfo{Height: uint64(100)}
+			os.SetNextExpectedSeek(uint64(100))
+			err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
+			assert.NoError(t, err, "can't start delivery")
+
+			// Check that delivery service requests blocks in order
+			go os.SendBlock(uint64(100))
+			assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
+			go os.SendBlock(uint64(101))
+			assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
+			li.Set(102)
+			os.SetNextExpectedSeek(102)
+			// Now stop the delivery service and make sure we don't disseminate a block
+			service.Stop()
+			go os.SendBlock(102)
+			select {
+			case <-gossipServiceAdapter.GossipBlockDisseminations:
+				assert.Fail(t, "Disseminated a block after shutting down the delivery service")
+			case <-time.After(time.Second * 2):
+			}
+			os.Shutdown()
+			time.Sleep(time.Second)
+		})
 	}
-	os.Shutdown()
-	time.Sleep(time.Second)
 }
 
 func TestDeliverServiceShutdownRespawn(t *testing.T) {
 	// Scenario: Launch an ordering service node and let the client pull some blocks.
 	// Then, wait a few seconds, and don't send any blocks.
 	// Afterwards - start a new instance and shut down the old instance.
-	viper.Set("peer.deliveryclient.reconnectTotalTimeThreshold", time.Second)
-	defer viper.Reset()
-	defer ensureNoGoroutineLeak(t)()
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			viper.Set("peer.deliveryclient.bft.blockRcvTotalBackoffDelay", time.Second)
+			viper.Set("peer.deliveryclient.connTimeout", 100*time.Millisecond)
+			viper.Set("peer.deliveryclient.reconnectTotalTimeThreshold", 5*time.Second)
+			defer viper.Reset()
+			defer ensureNoGoroutineLeak(t)()
 
-	osn1 := mocks.NewOrderer(5614, t)
+			osn1 := mocks.NewOrderer(5614, t)
 
-	time.Sleep(time.Second)
-	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+			time.Sleep(time.Second)
+			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
 
-	service, err := NewDeliverService(&Config{
-		Gossip:      gossipServiceAdapter,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, ConnectionCriteria{
-		Organizations: []string{"org"},
-		OrdererEndpointsByOrg: map[string][]string{
-			"org": {"localhost:5614", "localhost:5615"},
-		},
-	})
-	assert.NoError(t, err)
+			service, err := NewDeliverService(&Config{
+				Gossip:      gossipServiceAdapter,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, ConnectionCriteria{
+				Organizations: []string{"org"},
+				OrdererEndpointsByOrg: map[string][]string{
+					"org": {"localhost:5614", "localhost:5615"},
+				},
+			})
+			assert.NoError(t, err)
 
-	li := &mocks.MockLedgerInfo{Height: uint64(100)}
-	osn1.SetNextExpectedSeek(uint64(100))
-	err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
-	assert.NoError(t, err, "can't start delivery")
+			li := &mocks.MockLedgerInfo{Height: uint64(100)}
+			osn1.SetNextExpectedSeek(uint64(100))
+			err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
+			assert.NoError(t, err, "can't start delivery")
 
-	// Check that delivery service requests blocks in order
-	go osn1.SendBlock(uint64(100))
-	assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
-	go osn1.SendBlock(uint64(101))
-	assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
-	atomic.StoreUint64(&li.Height, uint64(102))
-	// Now wait for a few seconds
-	time.Sleep(time.Second * 2)
-	// Now start the new instance
-	osn2 := mocks.NewOrderer(5615, t)
-	// Now stop the old instance
-	osn1.Shutdown()
-	// Send a block from osn2
-	osn2.SetNextExpectedSeek(uint64(102))
-	go osn2.SendBlock(uint64(102))
-	// Ensure it is received
-	assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
-	service.Stop()
-	osn2.Shutdown()
+			time.Sleep(time.Second)
+
+			// Check that delivery service requests blocks in order
+			go osn1.SendBlock(uint64(100))
+			assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
+			blockEP1 := service.GetEndpoint("TEST_CHAINID")
+
+			go osn1.SendBlock(uint64(101))
+			assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
+			li.Set(uint64(102))
+			// Now wait for a few seconds
+			time.Sleep(time.Second * 2)
+			// Now start the new instance
+			osn2 := mocks.NewOrderer(5615, t)
+			osn2.SetNextExpectedSeek(uint64(102))
+			// Now stop the old instance
+			osn1.Shutdown()
+			// Send a block from osn2
+			time.Sleep(time.Second)
+			for {
+				blockEP2 := service.GetEndpoint("TEST_CHAINID")
+				if len(blockEP2) > 0 && blockEP2 != blockEP1 {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			go osn2.SendBlock(uint64(102))
+			// Ensure it is received
+			assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
+			service.Stop()
+			osn2.Shutdown()
+		})
+	}
 }
 
 func TestDeliverServiceDisconnectReconnect(t *testing.T) {
@@ -696,113 +690,131 @@ func TestDeliverServiceDisconnectReconnect(t *testing.T) {
 	// (0.5s + 1s + 2s + 4s) > 2s.
 	// Send new block and check that delivery client got it.
 	// So, we can see that waiting on recv in empty channel do reset total time spend in reconnection.
-	viper.Set("peer.deliveryclient.reconnectTotalTimeThreshold", time.Second*2)
-	defer viper.Reset()
-	defer ensureNoGoroutineLeak(t)()
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			viper.Set("peer.deliveryclient.bft.blockRcvTotalBackoffDelay", time.Second)
+			viper.Set("peer.deliveryclient.connTimeout", 100*time.Millisecond)
+			viper.Set("peer.deliveryclient.reconnectTotalTimeThreshold", 2*time.Second)
+			defer viper.Reset()
+			defer ensureNoGoroutineLeak(t)()
 
-	osn := mocks.NewOrderer(5614, t)
+			osn := mocks.NewOrderer(5614, t)
 
-	time.Sleep(time.Second)
-	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+			time.Sleep(time.Second)
+			gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
 
-	service, err := NewDeliverService(&Config{
-		Gossip:      gossipServiceAdapter,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, ConnectionCriteria{
-		Organizations: []string{"org"},
-		OrdererEndpointsByOrg: map[string][]string{
-			"org": {"localhost:5614"},
-		},
-	})
-	assert.NoError(t, err)
+			service, err := NewDeliverService(&Config{
+				Gossip:      gossipServiceAdapter,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, ConnectionCriteria{
+				Organizations: []string{"org"},
+				OrdererEndpointsByOrg: map[string][]string{
+					"org": {"localhost:5614"},
+				},
+			})
+			assert.NoError(t, err)
 
-	li := &mocks.MockLedgerInfo{Height: uint64(100)}
-	osn.SetNextExpectedSeek(uint64(100))
-	err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
-	assert.NoError(t, err, "can't start delivery")
+			li := &mocks.MockLedgerInfo{Height: uint64(100)}
+			osn.SetNextExpectedSeek(uint64(100))
+			err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
+			assert.NoError(t, err, "can't start delivery")
 
-	// Check that delivery service requests blocks in order
-	go osn.SendBlock(uint64(100))
-	assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
-	go osn.SendBlock(uint64(101))
-	assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
-	atomic.StoreUint64(&li.Height, uint64(102))
+			// Check that delivery service requests blocks in order
+			go osn.SendBlock(uint64(100))
+			assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
+			go osn.SendBlock(uint64(101))
+			assertBlockDissemination(101, gossipServiceAdapter.GossipBlockDisseminations, t)
+			li.Set(102)
 
-	for i := 0; i < 5; i += 1 {
-		// Shutdown orderer, simulate network disconnect
-		osn.Shutdown()
-		// Now wait for a disconnect to be discovered
-		assert.True(t, waitForConnectionCount(osn, 0), "deliverService can't disconnect from orderer")
-		// Recreate orderer, simulating network is back
-		osn = mocks.NewOrderer(5614, t)
-		osn.SetNextExpectedSeek(atomic.LoadUint64(&li.Height))
-		// Now wait for a while, to client connect back and simulate empty channel
-		assert.True(t, waitForConnectionCount(osn, 1), "deliverService can't reconnect to orderer")
+			for i := 0; i < 5; i += 1 {
+				// Shutdown orderer, simulate network disconnect
+				osn.Shutdown()
+				// Now wait for a disconnect to be discovered
+				assert.True(t, waitForConnectionCount(osn, 0), "deliverService can't disconnect from orderer")
+				// Recreate orderer, simulating network is back
+				osn = mocks.NewOrderer(5614, t)
+				osn.SetNextExpectedSeek(102)
+				// Now wait for a while, to client connect back and simulate empty channel
+				assert.True(t, waitForConnectionCount(osn, 1), "deliverService can't reconnect to orderer")
+			}
+
+			// Send a block from orderer
+			go osn.SendBlock(uint64(102))
+			// Ensure it is received
+			assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
+			service.Stop()
+			osn.Shutdown()
+		})
 	}
-
-	// Send a block from orderer
-	go osn.SendBlock(uint64(102))
-	// Ensure it is received
-	assertBlockDissemination(102, gossipServiceAdapter.GossipBlockDisseminations, t)
-	service.Stop()
-	osn.Shutdown()
 }
 
 func TestDeliverServiceBadConfig(t *testing.T) {
-	notEmptyConnectionCriteria := ConnectionCriteria{
-		Organizations:         []string{"foo"},
-		OrdererEndpointsByOrg: map[string][]string{"foo": {"bar", "baz"}},
+	bftOpt := []bool{false, true}
+	for _, isBFT := range bftOpt {
+		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
+			flogging.ActivateSpec("bftDeliveryClient=DEBUG")
+			viper.Set("peer.deliveryclient.bft.enabled", isBFT)
+			defer viper.Reset()
+
+			notEmptyConnectionCriteria := ConnectionCriteria{
+				Organizations:         []string{"foo"},
+				OrdererEndpointsByOrg: map[string][]string{"foo": {"bar", "baz"}},
+			}
+			// Empty endpoints
+			service, err := NewDeliverService(&Config{
+				Gossip:      &mocks.MockGossipServiceAdapter{},
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, ConnectionCriteria{})
+			assert.EqualError(t, err, "no endpoints specified")
+			assert.Nil(t, service)
+
+			// Nil gossip adapter
+			service, err = NewDeliverService(&Config{
+				Gossip:      nil,
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, notEmptyConnectionCriteria)
+			assert.EqualError(t, err, "no gossip provider specified")
+			assert.Nil(t, service)
+
+			// Nil crypto service
+			service, err = NewDeliverService(&Config{
+				Gossip:      &mocks.MockGossipServiceAdapter{},
+				CryptoSvc:   nil,
+				ABCFactory:  DefaultABCFactory,
+				ConnFactory: DefaultConnectionFactory,
+			}, notEmptyConnectionCriteria)
+			assert.EqualError(t, err, "no crypto service specified")
+			assert.Nil(t, service)
+
+			// Nil ABCFactory
+			service, err = NewDeliverService(&Config{
+				Gossip:      &mocks.MockGossipServiceAdapter{},
+				CryptoSvc:   &mockMCS{},
+				ABCFactory:  nil,
+				ConnFactory: DefaultConnectionFactory,
+			}, notEmptyConnectionCriteria)
+			assert.EqualError(t, err, "no AtomicBroadcast factory specified")
+			assert.Nil(t, service)
+
+			// Nil connFactory
+			service, err = NewDeliverService(&Config{
+				Gossip:     &mocks.MockGossipServiceAdapter{},
+				CryptoSvc:  &mockMCS{},
+				ABCFactory: DefaultABCFactory,
+			}, notEmptyConnectionCriteria)
+			assert.EqualError(t, err, "no connection factory specified")
+			assert.Nil(t, service)
+		})
 	}
-	// Empty endpoints
-	service, err := NewDeliverService(&Config{
-		Gossip:      &mocks.MockGossipServiceAdapter{},
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, ConnectionCriteria{})
-	assert.EqualError(t, err, "no endpoints specified")
-	assert.Nil(t, service)
-
-	// Nil gossip adapter
-	service, err = NewDeliverService(&Config{
-		Gossip:      nil,
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, notEmptyConnectionCriteria)
-	assert.EqualError(t, err, "no gossip provider specified")
-	assert.Nil(t, service)
-
-	// Nil crypto service
-	service, err = NewDeliverService(&Config{
-		Gossip:      &mocks.MockGossipServiceAdapter{},
-		CryptoSvc:   nil,
-		ABCFactory:  DefaultABCFactory,
-		ConnFactory: DefaultConnectionFactory,
-	}, notEmptyConnectionCriteria)
-	assert.EqualError(t, err, "no crypto service specified")
-	assert.Nil(t, service)
-
-	// Nil ABCFactory
-	service, err = NewDeliverService(&Config{
-		Gossip:      &mocks.MockGossipServiceAdapter{},
-		CryptoSvc:   &mockMCS{},
-		ABCFactory:  nil,
-		ConnFactory: DefaultConnectionFactory,
-	}, notEmptyConnectionCriteria)
-	assert.EqualError(t, err, "no AtomicBroadcast factory specified")
-	assert.Nil(t, service)
-
-	// Nil connFactory
-	service, err = NewDeliverService(&Config{
-		Gossip:     &mocks.MockGossipServiceAdapter{},
-		CryptoSvc:  &mockMCS{},
-		ABCFactory: DefaultABCFactory,
-	}, notEmptyConnectionCriteria)
-	assert.EqualError(t, err, "no connection factory specified")
-	assert.Nil(t, service)
 }
 
 func TestRetryPolicyOverflow(t *testing.T) {
@@ -811,7 +823,8 @@ func TestRetryPolicyOverflow(t *testing.T) {
 			return nil, errors.New("")
 		}
 	}
-	client := (&deliverServiceImpl{conf: &Config{ConnFactory: connFactory}}).newClient("TEST", &mocks.MockLedgerInfo{Height: uint64(100)})
+	client := (&deliverServiceImpl{
+		conf: &Config{ConnFactory: connFactory}}).newClient("TEST", &mocks.MockLedgerInfo{Height: uint64(100)})
 	assert.NotNil(t, client.shouldRetry)
 	for i := 0; i < 100; i++ {
 		retryTime, _ := client.shouldRetry(i, time.Second)
@@ -944,5 +957,33 @@ func TestToEndpointCriteria(t *testing.T) {
 		t.Run(testCase.description, func(t *testing.T) {
 			assert.Equal(t, testCase.expectedOut, testCase.input.toEndpointCriteria())
 		})
+	}
+}
+
+func detectOSNConnections(isBFT bool, os1, os2 *mocks.Orderer) (*mocks.Orderer, *mocks.Orderer, error) {
+	for i := int64(0); ; i++ {
+		if !isBFT {
+			if os1.ConnCount() > 0 {
+				return os1, os2, nil
+			}
+			if os2.ConnCount() > 0 {
+				return os2, os1, nil
+			}
+		} else {
+			c1, t1 := os1.ConnCountType()
+			c2, t2 := os2.ConnCountType()
+			if c1 > 0 && c2 > 0 {
+				if t1 == orderer.SeekInfo_BLOCK && t2 == orderer.SeekInfo_HEADER_WITH_SIG {
+					return os1, os2, nil
+				}
+				if t2 == orderer.SeekInfo_BLOCK && t1 == orderer.SeekInfo_HEADER_WITH_SIG {
+					return os2, os1, nil
+				}
+			}
+		}
+		time.Sleep(time.Millisecond * 10)
+		if time.Duration(i*10*time.Millisecond.Nanoseconds()) > 5*time.Second {
+			return nil, nil, errors.New("timeout: no connections")
+		}
 	}
 }
