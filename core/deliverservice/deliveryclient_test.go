@@ -216,6 +216,11 @@ func TestDeliverServiceRestart(t *testing.T) {
 }
 
 func TestDeliverServiceFailover(t *testing.T) {
+	// Scenario: bring up 2 ordering service instances,
+	// and shut down the instance that the client has connected to.
+	// Client is expected to connect to the other instance, and to ask for a block sequence that is the next block
+	// after the last block it got from the ordering service that was shut down.
+	// Then, shut down the other node, and bring back the first (that was shut down first).
 	bftOpt := []bool{false, true}
 	for _, isBFT := range bftOpt {
 		t.Run(fmt.Sprintf("BFT=%v", isBFT), func(t *testing.T) {
@@ -224,11 +229,6 @@ func TestDeliverServiceFailover(t *testing.T) {
 			viper.Set("peer.deliveryclient.connTimeout", 100*time.Millisecond)
 			defer viper.Reset()
 			defer ensureNoGoroutineLeak(t)()
-			// Scenario: bring up 2 ordering service instances,
-			// and shut down the instance that the client has connected to.
-			// Client is expected to connect to the other instance, and to ask for a block sequence that is the next block
-			// after the last block it got from the ordering service that was shut down.
-			// Then, shut down the other node, and bring back the first (that was shut down first).
 
 			os1 := mocks.NewOrderer(5612, t)
 			os2 := mocks.NewOrderer(5613, t)
@@ -256,10 +256,10 @@ func TestDeliverServiceFailover(t *testing.T) {
 			assert.NoError(t, err, "can't start delivery")
 
 			// We need to discover to which instance the client connected to
-			inst1, inst2, err := detectOSNConnections(isBFT, os1, os2)
+			inst, err := detectOSNConnections(isBFT, os1, os2)
 			assert.NoError(t, err, "no connections")
-			logger.Infof("TEST: first OSN : %s", inst1.Addr().String())
-			logger.Infof("TEST: second OSN: %s", inst2.Addr().String())
+			logger.Infof("TEST: first OSN : %s", inst[0].Addr().String())
+			logger.Infof("TEST: second OSN: %s", inst[1].Addr().String())
 
 			blockEP := service.GetEndpoint("TEST_CHAINID")
 			logger.Infof("TEST: block receiver #1 endpoint=%s", blockEP)
@@ -277,8 +277,8 @@ func TestDeliverServiceFailover(t *testing.T) {
 				reincarnatedNodePort = 5613
 			}
 
-			assert.Equal(t, inst1.Addr().String(), instance2fail.Addr().String())
-			assert.Equal(t, inst2.Addr().String(), instance2failSecond.Addr().String())
+			assert.Equal(t, inst[0].Addr().String(), instance2fail.Addr().String())
+			assert.Equal(t, inst[1].Addr().String(), instance2failSecond.Addr().String())
 
 			go instance2fail.SendBlock(uint64(100))
 			assertBlockDissemination(100, gossipServiceAdapter.GossipBlockDisseminations, t)
@@ -413,8 +413,10 @@ func TestDeliverServiceServiceUnavailable(t *testing.T) {
 			err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
 			assert.NoError(t, err, "can't start delivery")
 
-			activeInstance, backupInstance, err := detectOSNConnections(isBFT, os1, os2)
+			inst, err := detectOSNConnections(isBFT, os1, os2)
 			assert.NoError(t, err, "no connections")
+			activeInstance, backupInstance := inst[0], inst[1]
+
 			logger.Infof("TEST: first OSN: %s", activeInstance.Addr().String())
 			logger.Infof("TEST: second OSN: %s", backupInstance.Addr().String())
 
@@ -645,7 +647,9 @@ func TestDeliverServiceShutdownRespawn(t *testing.T) {
 			err = service.StartDeliverForChannel("TEST_CHAINID", li, func() {})
 			assert.NoError(t, err, "can't start delivery")
 
-			time.Sleep(time.Second)
+			// make sure we have a block receiver before we send a block
+			_, err = detectOSNConnections(isBFT, osn1)
+			assert.NoError(t, err)
 
 			// Check that delivery service requests blocks in order
 			go osn1.SendBlock(uint64(100))
@@ -960,30 +964,64 @@ func TestToEndpointCriteria(t *testing.T) {
 	}
 }
 
-func detectOSNConnections(isBFT bool, os1, os2 *mocks.Orderer) (*mocks.Orderer, *mocks.Orderer, error) {
-	for i := int64(0); ; i++ {
-		if !isBFT {
-			if os1.ConnCount() > 0 {
-				return os1, os2, nil
-			}
-			if os2.ConnCount() > 0 {
-				return os2, os1, nil
-			}
-		} else {
-			c1, t1 := os1.ConnCountType()
-			c2, t2 := os2.ConnCountType()
-			if c1 > 0 && c2 > 0 {
-				if t1 == orderer.SeekInfo_BLOCK && t2 == orderer.SeekInfo_HEADER_WITH_SIG {
-					return os1, os2, nil
+func detectOSNConnections(isBFT bool, osSet ...*mocks.Orderer) ([]*mocks.Orderer, error) {
+	var first int
+	r := make([]*mocks.Orderer, len(osSet))
+
+	if !isBFT {
+		for i := int64(0); ; i++ {
+			first = -1
+			for j, os := range osSet {
+				if os.ConnCount() > 0 {
+					first = j
+					break
 				}
-				if t2 == orderer.SeekInfo_BLOCK && t1 == orderer.SeekInfo_HEADER_WITH_SIG {
-					return os2, os1, nil
-				}
+			}
+
+			if first >= 0 {
+				break //found
+			}
+
+			time.Sleep(time.Millisecond * 10)
+			if time.Duration(i*10*time.Millisecond.Nanoseconds()) > 5*time.Second {
+				return nil, errors.New("timeout: no connections")
 			}
 		}
-		time.Sleep(time.Millisecond * 10)
-		if time.Duration(i*10*time.Millisecond.Nanoseconds()) > 5*time.Second {
-			return nil, nil, errors.New("timeout: no connections")
+	} else {
+		cType := make([]orderer.SeekInfo_SeekContentType, len(osSet))
+		for i := int64(0); ; i++ {
+			var cCnt int
+			first = -1
+			for j, os := range osSet {
+				c1, t1 := os.ConnCountType()
+				if c1 > 0 {
+					cCnt++
+				}
+				cType[j] = t1
+				if t1 == orderer.SeekInfo_BLOCK {
+					first = j
+				}
+			}
+
+			if cCnt == len(osSet) && first >= 0 {
+				break //found
+			}
+
+			time.Sleep(time.Millisecond * 10)
+			if time.Duration(i*10*time.Millisecond.Nanoseconds()) > 5*time.Second {
+				return nil, errors.New("timeout: no connections")
+			}
 		}
 	}
+
+	r[0] = osSet[first]
+	n := 1
+	for j, os := range osSet {
+		if j == first {
+			continue
+		}
+		r[n] = os
+		n++
+	}
+	return r, nil
 }

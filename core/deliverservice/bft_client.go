@@ -435,6 +435,12 @@ func (c *bftDeliveryClient) Close() {
 	c.stopFlag = true
 	close(c.stopChan)
 
+	c.disconnectAll()
+
+	bftLogger.Debugf("Exit")
+}
+
+func (c *bftDeliveryClient) disconnectAll() {
 	if c.blockReceiver != nil {
 		ep := c.blockReceiver.GetEndpoint()
 		c.blockReceiver.Close()
@@ -447,8 +453,6 @@ func (c *bftDeliveryClient) Close() {
 		bftLogger.Debugf("[%s] closed header receiver to: %s", c.chainID, ep)
 		delete(c.headerReceivers, ep)
 	}
-
-	bftLogger.Debugf("Exit")
 }
 
 // Disconnect just the block receiver client, so that the next Recv() will choose a new one.
@@ -474,7 +478,21 @@ func (c *bftDeliveryClient) UpdateReceived(blockNumber uint64) {
 }
 
 func (c *bftDeliveryClient) UpdateEndpoints(endpoints []comm.EndpointCriteria) {
-	//TODO
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if c.stopFlag {
+		return
+	}
+
+	if equalEndpoints(c.endpoints, endpoints) {
+		return
+	}
+
+	bftLogger.Debugf("[%s] updating endpoints: existing: %s, new: %s", c.chainID, c.endpoints, endpoints)
+	c.endpoints = endpoints
+	c.blockReceiverIndex = 0
+	c.disconnectAll()
 }
 
 func (c *bftDeliveryClient) shouldStop() bool {
