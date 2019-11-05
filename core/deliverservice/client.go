@@ -285,22 +285,24 @@ func (bc *broadcastClient) UpdateEndpoints(endpoints []comm.EndpointCriteria) {
 }
 
 func (bc *broadcastClient) areEndpointsUpdated(newEndpoints []comm.EndpointCriteria) bool {
-	existingEndpoints := bc.prod.GetEndpoints()
+	return !equalEndpoints(bc.prod.GetEndpoints(), newEndpoints)
+}
 
+func equalEndpoints(existingEndpoints, newEndpoints []comm.EndpointCriteria) bool {
 	if len(newEndpoints) != len(existingEndpoints) {
-		return true
+		return false
 	}
 
 	// Check that endpoints were actually updated
 	for _, endpoint := range newEndpoints {
 		if !contains(endpoint, existingEndpoints) {
 			// Found new endpoint
-			return true
+			return false
 		}
 	}
 	// Endpoints are of the same length and the existing endpoints contain all the new endpoints,
 	// so there are no new changes.
-	return false
+	return true
 }
 
 func contains(s comm.EndpointCriteria, a []comm.EndpointCriteria) bool {
