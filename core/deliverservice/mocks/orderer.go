@@ -55,6 +55,14 @@ func NewOrderer(port int, t *testing.T) *Orderer {
 }
 
 func (o *Orderer) Shutdown() {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	if o.stop {
+		return
+	}
+
+	o.stop = true
 	close(o.stopChan)
 	o.Server.Stop()
 	_ = o.Listener.Close()
