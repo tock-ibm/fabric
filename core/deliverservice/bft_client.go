@@ -522,19 +522,18 @@ func (c *bftDeliveryClient) GetNextBlockNumTime() (uint64, time.Time) {
 	return c.nextBlockNumber, c.lastBlockTime
 }
 
-func (c *bftDeliveryClient) GetHeadersBlockNumTime() ([]uint64, []time.Time) {
+func (c *bftDeliveryClient) GetHeadersBlockNumTime() ([]uint64, []time.Time, []error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	hNum := make([]uint64, 0, len(c.headerReceivers))
 	hTime := make([]time.Time, 0, len(c.headerReceivers))
+	hErr := make([]error, 0, len(c.headerReceivers))
 	for _, hRcv := range c.headerReceivers {
 		num, t, err := hRcv.LastBlockNum()
-		if err != nil {
-			continue
-		}
 		hNum = append(hNum, num)
 		hTime = append(hTime, t)
+		hErr = append(hErr, err)
 	}
-	return hNum, hTime
+	return hNum, hTime, hErr
 }

@@ -68,12 +68,27 @@ func (o *Orderer) Shutdown() {
 	_ = o.Listener.Close()
 }
 
+func (o *Orderer) isStop() bool {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	if o.stop {
+		return true
+	}
+	return false
+}
 func (o *Orderer) Fail() {
+	if o.isStop() {
+		return
+	}
 	atomic.StoreInt32(&o.failFlag, int32(1))
 	o.blockChannel <- 0
 }
 
 func (o *Orderer) Resurrect() {
+	if o.isStop() {
+		return
+	}
 	atomic.StoreInt32(&o.failFlag, int32(0))
 	for {
 		select {
@@ -90,13 +105,6 @@ func (o *Orderer) ConnCount() int {
 	defer o.mutex.Unlock()
 
 	return int(o.connCount)
-}
-
-func (o *Orderer) SeekInfoContentType() orderer.SeekInfo_SeekContentType {
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-
-	return o.contentType
 }
 
 func (o *Orderer) ConnCountType() (int, orderer.SeekInfo_SeekContentType) {
@@ -119,6 +127,9 @@ func (o *Orderer) SetNextExpectedSeek(seq uint64) {
 }
 
 func (o *Orderer) SendBlock(seq uint64) {
+	if o.isStop() {
+		return
+	}
 	o.blockChannel <- seq
 }
 
