@@ -29,7 +29,6 @@ type MsgCryptoSrv interface {
 	api.MessageCryptoService
 }
 
-var ports = []int{5611, 5612, 5613, 5614}
 var endpoints = []comm.EndpointCriteria{
 	{Endpoint: "localhost:5611", Organizations: []string{"org1"}},
 	{Endpoint: "localhost:5612", Organizations: []string{"org2"}},
@@ -37,11 +36,23 @@ var endpoints = []comm.EndpointCriteria{
 	{Endpoint: "localhost:5614", Organizations: []string{"org4"}},
 }
 
+var endpoints3 = []comm.EndpointCriteria{
+	{Endpoint: "localhost:5615", Organizations: []string{"org1"}},
+	{Endpoint: "localhost:5616", Organizations: []string{"org2"}},
+	{Endpoint: "localhost:5617", Organizations: []string{"org3"}},
+}
+
 var endpointMap = map[int]comm.EndpointCriteria{
 	5611: {Endpoint: "localhost:5611", Organizations: []string{"org1"}},
 	5612: {Endpoint: "localhost:5612", Organizations: []string{"org2"}},
 	5613: {Endpoint: "localhost:5613", Organizations: []string{"org3"}},
 	5614: {Endpoint: "localhost:5614", Organizations: []string{"org4"}},
+}
+
+var endpointMap3 = map[int]comm.EndpointCriteria{
+	5615: {Endpoint: "localhost:5615", Organizations: []string{"org1"}},
+	5616: {Endpoint: "localhost:5616", Organizations: []string{"org2"}},
+	5617: {Endpoint: "localhost:5617", Organizations: []string{"org3"}},
 }
 
 // Scenario: create a client and close it.
@@ -118,10 +129,11 @@ func TestBFTDeliverClient_Recv(t *testing.T) {
 	assert.Equal(t, uint64(10), lastN)
 	assert.True(t, lastT.After(beforeSend))
 
-	headersNum, headerT := bc.GetHeadersBlockNumTime()
+	headersNum, headerT, headerErr := bc.GetHeadersBlockNumTime()
 	for i, n := range headersNum {
 		assert.Equal(t, uint64(10), n)
 		assert.True(t, headerT[i].After(beforeSend))
+		assert.NoError(t, headerErr[i])
 	}
 
 	for _, os := range osArray {
@@ -178,6 +190,7 @@ func TestBFTDeliverClient_Censorship(t *testing.T) {
 	blockEP, err := waitForBlockEP(bc)
 	assert.NoError(t, err)
 	// one normal block
+	beforeSend := time.Now()
 	for _, os := range osMap {
 		os.SendBlock(5)
 	}
@@ -185,9 +198,13 @@ func TestBFTDeliverClient_Censorship(t *testing.T) {
 		os.SetNextExpectedSeek(6)
 	}
 	time.Sleep(time.Second)
+	lastN, lastT := bc.GetNextBlockNumTime()
+	assert.Equal(t, uint64(6), lastN)
+	assert.True(t, lastT.After(beforeSend))
+	verifyHeaderReceivers(t, bc, 3, 5, beforeSend, 0)
 
 	// only headers
-	beforeSend := time.Now()
+	beforeSend = time.Now()
 	for seq := uint64(6); seq < uint64(10); seq++ {
 		for ep, os := range osMap {
 			if ep == blockEP { //censorship
@@ -197,7 +214,7 @@ func TestBFTDeliverClient_Censorship(t *testing.T) {
 		}
 	}
 
-	time.Sleep(4 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	// the client detected the censorship and switched
 	blockEP2, err := waitForBlockEP(bc)
@@ -206,31 +223,34 @@ func TestBFTDeliverClient_Censorship(t *testing.T) {
 
 	for seq := uint64(6); seq < uint64(10); seq++ {
 		for ep, os := range osMap {
-			if ep != blockEP2 {
-				continue
+			if ep == blockEP2 {
+				os.SendBlock(seq)
 			}
-			os.SendBlock(seq)
 		}
 	}
 
 	time.Sleep(1 * time.Second)
 
-	bc.Close()
+	lastN, lastT = bc.GetNextBlockNumTime()
+	assert.Equal(t, uint64(10), lastN)
+	assert.True(t, lastT.After(beforeSend))
+	verifyHeaderReceivers(t, bc, 3, 9, beforeSend, 1)
 
-	assert.Equal(t, uint64(10), bc.nextBlockNumber)
-	assert.True(t, bc.lastBlockTime.After(beforeSend))
+	bc.Close()
 
 	for _, os := range osMap {
 		os.Shutdown()
 	}
 }
 
-// Scenario: server failover. Create a client against a set of orderer mocks.
-// Receive one block. Then, the orderer sending blocks fails, but headers keep coming.
-// The client should switch to another orderer and seek from the new height. Check block & header reception.
+// Scenario: server fail-over. Create a client against a set of orderer mocks.
+// Receive one block. Then, the orderer sending blocks fails.
+// The client should switch to another orderer and seek from the new height. Send a few blocks.
+// Check block & header reception.
 func TestBFTDeliverClient_Failover(t *testing.T) {
 	flogging.ActivateSpec("bftDeliveryClient,deliveryClient=DEBUG")
 	viper.Set("peer.deliveryclient.bft.blockRcvTotalBackoffDelay", time.Second)
+	viper.Set("peer.deliveryclient.bft.maxBackoffDelay", time.Second)
 	viper.Set("peer.deliveryclient.connTimeout", 100*time.Millisecond)
 	defer viper.Reset()
 	defer ensureNoGoroutineLeak(t)()
@@ -287,7 +307,7 @@ func TestBFTDeliverClient_Failover(t *testing.T) {
 	for ep, os := range osMap {
 		if ep == blockEP {
 			os.Shutdown()
-			bftLogger.Infof("TEST: shuting down: %s", ep)
+			bftLogger.Infof("TEST: shutting down: %s", ep)
 		}
 	}
 
@@ -308,16 +328,161 @@ func TestBFTDeliverClient_Failover(t *testing.T) {
 		}
 	}
 
+	time.Sleep(2 * time.Second)
+
+	lastN, lastT := bc.GetNextBlockNumTime()
+	assert.Equal(t, uint64(10), lastN)
+	assert.True(t, lastT.After(beforeSend))
+	verifyHeaderReceivers(t, bc, 3, 9, beforeSend, 1)
+
+	//restart the orderer
+	for port, ep := range endpointMap {
+		if ep.Endpoint == blockEP {
+			os := mocks.NewOrderer(port, t)
+			os.SetNextExpectedSeek(10)
+			osMap[ep.Endpoint] = os
+			bftLogger.Infof("TEST: restarting: %s", ep)
+		}
+	}
+
+	time.Sleep(2 * time.Second)
+	beforeSend = time.Now()
+	for _, os := range osMap {
+		os.SendBlock(10)
+	}
 	time.Sleep(1 * time.Second)
 
-	bc.Close()
+	lastN, lastT = bc.GetNextBlockNumTime()
+	assert.Equal(t, uint64(11), lastN)
+	assert.True(t, lastT.After(beforeSend))
+	verifyHeaderReceivers(t, bc, 3, 10, beforeSend, 0)
 
-	assert.Equal(t, uint64(10), bc.nextBlockNumber)
-	assert.True(t, bc.lastBlockTime.After(beforeSend))
+	bc.Close()
 
 	for _, os := range osMap {
 		os.Shutdown()
 	}
+}
+
+// Scenario: update endpoints. Create a client against a set of 4 orderer mocks.
+// Receive one block. Then, increase the set to 7 orderers.
+// The client should disconnect and re-connect to new set.
+// Send a few blocks. Check block & header reception.
+func TestBFTDeliverClient_UpdateEndpoints(t *testing.T) {
+	flogging.ActivateSpec("bftDeliveryClient,deliveryClient=DEBUG")
+	viper.Set("peer.deliveryclient.bft.blockRcvTotalBackoffDelay", time.Second)
+	viper.Set("peer.deliveryclient.bft.maxBackoffDelay", time.Second)
+	viper.Set("peer.deliveryclient.connTimeout", 100*time.Millisecond)
+	defer viper.Reset()
+	defer ensureNoGoroutineLeak(t)()
+
+	osMap := make(map[string]*mocks.Orderer, len(endpointMap))
+	for port, ep := range endpointMap {
+		osMap[ep.Endpoint] = mocks.NewOrderer(port, t)
+	}
+	for _, os := range osMap {
+		os.SetNextExpectedSeek(5)
+	}
+
+	connFactory := func(endpoint comm.EndpointCriteria) (*grpc.ClientConn, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), getConnectionTimeout())
+		defer cancel()
+		return grpc.DialContext(ctx, endpoint.Endpoint, grpc.WithInsecure(), grpc.WithBlock())
+		//return grpc.Dial(endpoint.Endpoint, grpc.WithInsecure(), grpc.WithBlock())
+	}
+	var ledgerHeight uint64 = 5
+	ledgerInfoMock := &mocks.LedgerInfo{}
+	msgVerifierMock := &mocks.MessageCryptoVerifier{}
+	bc := NewBFTDeliveryClient("test-chain", connFactory, endpoints, DefaultABCFactory, ledgerInfoMock, msgVerifierMock)
+	ledgerInfoMock.On("LedgerHeight").Return(func() uint64 { return atomic.LoadUint64(&ledgerHeight) }, nil)
+	msgVerifierMock.On("VerifyHeader", mock.AnythingOfType("string"), mock.AnythingOfType("*common.Block")).Return(nil)
+
+	go func() {
+		for {
+			resp, err := bc.Recv()
+			if err != nil {
+				assert.EqualError(t, err, "client is closing")
+				return
+			}
+			block := resp.GetBlock()
+			assert.NotNil(t, block)
+			if block == nil {
+				return
+			}
+			atomic.StoreUint64(&ledgerHeight, block.Header.Number+1)
+			bc.UpdateReceived(block.Header.Number)
+		}
+	}()
+
+	_, err := waitForBlockEP(bc)
+	assert.NoError(t, err)
+
+	// one normal block
+	beforeSend := time.Now()
+	for _, os := range osMap {
+		os.SendBlock(5)
+	}
+	for _, os := range osMap {
+		os.SetNextExpectedSeek(6)
+	}
+	time.Sleep(time.Second)
+	lastN, lastT := bc.GetNextBlockNumTime()
+	assert.Equal(t, uint64(6), lastN)
+	assert.True(t, lastT.After(beforeSend))
+	verifyHeaderReceivers(t, bc, 3, 5, beforeSend, 0)
+
+	// start 3 additional orderers
+	for port, ep := range endpointMap3 {
+		os := mocks.NewOrderer(port, t)
+		os.SetNextExpectedSeek(6)
+		osMap[ep.Endpoint] = os
+	}
+
+	time.Sleep(time.Second)
+
+	endpoints7 := append(make([]comm.EndpointCriteria, 0), endpoints...)
+	endpoints7 = append(endpoints7, endpoints3...)
+	bc.UpdateEndpoints(endpoints7)
+	time.Sleep(time.Second)
+
+	_, err = waitForBlockEP(bc)
+	assert.NoError(t, err)
+
+	beforeSend = time.Now()
+	for seq := uint64(6); seq < uint64(10); seq++ {
+		for _, os := range osMap {
+			os.SendBlock(seq)
+		}
+	}
+
+	time.Sleep(2 * time.Second)
+
+	lastN, lastT = bc.GetNextBlockNumTime()
+	assert.Equal(t, uint64(10), lastN)
+	assert.True(t, lastT.After(beforeSend))
+	verifyHeaderReceivers(t, bc, 6, 9, beforeSend, 0)
+
+	bc.Close()
+
+	for _, os := range osMap {
+		os.Shutdown()
+	}
+}
+
+func verifyHeaderReceivers(t *testing.T, client *bftDeliveryClient, expectedNumHdr int, expectedBlockNum uint64, expectedBlockTime time.Time, expectedNumErr int) {
+	lastHdrN, lastHdrT, lastHdrErr := client.GetHeadersBlockNumTime()
+	numErr := 0
+	assert.Len(t, lastHdrN, expectedNumHdr)
+	for i, n := range lastHdrN {
+		if lastHdrErr[i] == nil {
+			assert.Equal(t, uint64(expectedBlockNum), n)
+			assert.True(t, lastHdrT[i].After(expectedBlockTime))
+		} else {
+			numErr++
+		}
+	}
+	assert.Equal(t, expectedNumErr, numErr)
+	return
 }
 
 func waitForBlockEP(bc *bftDeliveryClient) (string, error) {
