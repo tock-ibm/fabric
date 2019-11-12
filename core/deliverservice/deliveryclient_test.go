@@ -29,8 +29,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-//go:generate counterfeiter -o mocks/connection_producer.go -fake-name ConnectionProducer . connectionProducer
-
 type connectionProducer interface {
 	comm.ConnectionProducer
 }
@@ -320,10 +318,10 @@ func TestDeliverServiceFailover(t *testing.T) {
 }
 
 func TestDeliverServiceUpdateEndpoints(t *testing.T) {
-	connProd := &mocks.ConnectionProducer{}
+	endpointUpdater := &mocks.EndpointUpdater{}
 	testChannel := "test_channel"
 
-	ds := &deliverServiceImpl{
+	var ds = &deliverServiceImpl{
 		connConfig: ConnectionCriteria{
 			Organizations: []string{"org1"},
 			OrdererEndpointsByOrg: map[string][]string{
@@ -337,19 +335,17 @@ func TestDeliverServiceUpdateEndpoints(t *testing.T) {
 		},
 		deliverClients: map[string]*deliverClient{
 			testChannel: {
-				bclient: &broadcastClient{
-					prod: connProd,
-				},
+				bclient: endpointUpdater, // can be either a broadcastClient or a bftDeliveryClient
 			},
 		},
 	}
-
 	expectedEC := []comm.EndpointCriteria{
 		{Organizations: []string{"org1"}, Endpoint: "localhost:5614"},
 		{Organizations: []string{"org2"}, Endpoint: "localhost:5613"},
 	}
+	endpointUpdater.On("UpdateEndpoints", expectedEC)
 
-	ds.UpdateEndpoints(
+	err := ds.UpdateEndpoints(
 		testChannel,
 		ConnectionCriteria{
 			Organizations: []string{"org1", "org2"},
@@ -359,9 +355,19 @@ func TestDeliverServiceUpdateEndpoints(t *testing.T) {
 			},
 		},
 	)
-	assert.Equal(t, 1, connProd.UpdateEndpointsCallCount())
-	assert.Equal(t, expectedEC, connProd.UpdateEndpointsArgsForCall(0))
+	assert.NoError(t, err)
 
+	err = ds.UpdateEndpoints(
+		"bogus-channel",
+		ConnectionCriteria{
+			Organizations: []string{"org1", "org2"},
+			OrdererEndpointsByOrg: map[string][]string{
+				"org1": {"localhost:5612"},
+				"org2": {"localhost:5613"},
+			},
+		},
+	)
+	assert.EqualError(t, err, "Channel with bogus-channel id was not found")
 }
 
 func TestDeliverServiceServiceUnavailable(t *testing.T) {

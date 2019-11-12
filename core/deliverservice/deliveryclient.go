@@ -82,14 +82,18 @@ type deliverServiceImpl struct {
 	stopping       bool
 }
 
-type endpointUpdater interface {
+//go:generate mockery -dir . -name EndpointUpdater -case underscore -output ./mocks/ -keeptree
+
+type EndpointUpdater interface {
+	// UpdateEndpoints updates the endpoint of the underlying client
 	UpdateEndpoints(endpoints []comm.EndpointCriteria)
+	// GetEndpoint retrieves the orderer endpoint from which the client is receiving blocks (as opposed to headers)
 	GetEndpoint() string
 }
 
 type deliverClient struct {
 	bp      blocksprovider.BlocksProvider
-	bclient endpointUpdater
+	bclient EndpointUpdater
 }
 
 // Config dictates the DeliveryService's properties,
