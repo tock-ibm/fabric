@@ -74,7 +74,7 @@ func TestSignProposal(t *testing.T) {
 	}
 
 	env := protoutil.MarshalOrPanic(&common.Envelope{Payload: []byte{1, 2, 3, 4, 5}})
-	prop, _ := assembler.AssembleProposal(nil, [][]byte{env})
+	prop := assembler.AssembleProposal(nil, [][]byte{env})
 
 	sig := s.SignProposal(prop)
 	assert.NotNil(t, sig)
@@ -82,7 +82,7 @@ func TestSignProposal(t *testing.T) {
 	signature := smartbft.Signature{}
 	signature.Unmarshal(sig.Msg)
 
-	assert.Equal(t, s.ID, sig.Id)
+	assert.Equal(t, s.ID, sig.ID)
 	assert.Equal(t, []byte{1, 2, 3}, sig.Value)
 	assert.Equal(t, prop.Header, signature.BlockHeader)
 	sigHdr := &common.SignatureHeader{}

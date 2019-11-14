@@ -102,9 +102,9 @@ func (v *Verifier) VerifyProposal(proposal types.Proposal) ([]types.RequestInfo,
 }
 
 func (v *Verifier) VerifySignature(signature types.Signature) error {
-	identity, exists := v.Id2Identity[signature.Id]
+	identity, exists := v.Id2Identity[signature.ID]
 	if !exists {
-		return errors.Errorf("node with id of %d doesn't exist", signature.Id)
+		return errors.Errorf("node with id of %d doesn't exist", signature.ID)
 	}
 
 	return v.AccessController.Evaluate([]*protoutil.SignedData{
@@ -130,14 +130,14 @@ func (v *Verifier) VerifyRequest(rawRequest []byte) (types.RequestInfo, error) {
 }
 
 func (v *Verifier) VerifyConsenterSig(signature types.Signature, prop types.Proposal) error {
-	identity, exists := v.Id2Identity[signature.Id]
+	identity, exists := v.Id2Identity[signature.ID]
 	if !exists {
-		return errors.Errorf("node with id of %d doesn't exist", signature.Id)
+		return errors.Errorf("node with id of %d doesn't exist", signature.ID)
 	}
 
 	sig := &Signature{}
 	if err := sig.Unmarshal(signature.Msg); err != nil {
-		v.Logger.Errorf("Failed unmarshaling signature from %d: %v", signature.Id, err)
+		v.Logger.Errorf("Failed unmarshaling signature from %d: %v", signature.ID, err)
 		v.Logger.Errorf("Offending signature Msg: %s", base64.StdEncoding.EncodeToString(signature.Msg))
 		v.Logger.Errorf("Offending signature Value: %s", base64.StdEncoding.EncodeToString(signature.Value))
 		return errors.Wrap(err, "malformed signature format")

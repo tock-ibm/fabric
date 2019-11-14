@@ -47,11 +47,12 @@ type change struct {
 // ViewChanger is responsible for running the view change protocol
 type ViewChanger struct {
 	// Configuration
-	SelfID    uint64
-	NodesList []uint64
-	N         uint64
-	f         int
-	quorum    int
+	SelfID            uint64
+	NodesList         []uint64
+	N                 uint64
+	f                 int
+	quorum            int
+	SpeedUpViewChange bool
 
 	Logger       api.Logger
 	Comm         Comm
@@ -344,11 +345,15 @@ func (v *ViewChanger) startViewChange(change *change) {
 }
 
 func (v *ViewChanger) processViewChangeMsg(restore bool) {
-	if (uint64(len(v.viewChangeMsgs.voted)) == uint64(v.f+1)) || restore { // join view change
+	if ((uint64(len(v.viewChangeMsgs.voted)) == uint64(v.f+1)) && v.SpeedUpViewChange) || restore { // join view change
 		v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
 		v.startViewChange(&change{v.currView, true})
 	}
-	if (len(v.viewChangeMsgs.voted) >= v.quorum-1 && v.nextView > v.currView) || restore { // send view data
+	if (len(v.viewChangeMsgs.voted) >= v.quorum-1) || restore { // send view data
+		if !v.SpeedUpViewChange {
+			v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
+			v.startViewChange(&change{v.currView, true})
+		}
 		if !restore {
 			msgToSave := &protos.SavedMessage{
 				Content: &protos.SavedMessage_ViewChange{
@@ -445,7 +450,7 @@ func (v *ViewChanger) validateViewDataMsg(vd *protos.SignedViewData, sender uint
 		v.Logger.Warnf("Node %d got viewData message %v from %d, but signer %d is not the sender %d", v.SelfID, vd, sender, vd.Signer, sender)
 		return false
 	}
-	if err := v.Verifier.VerifySignature(types.Signature{Id: vd.Signer, Value: vd.Signature, Msg: vd.RawViewData}); err != nil {
+	if err := v.Verifier.VerifySignature(types.Signature{ID: vd.Signer, Value: vd.Signature, Msg: vd.RawViewData}); err != nil {
 		v.Logger.Warnf("Node %d got viewData message %v from %d, but signature is invalid, error: %v", v.SelfID, vd, sender, err)
 		return false
 	}
@@ -504,7 +509,7 @@ func ValidateLastDecision(vd *protos.ViewData, quorum int, N uint64, verifier ap
 		}
 		nodesMap[sig.Signer] = struct{}{}
 		signature := types.Signature{
-			Id:    sig.Signer,
+			ID:    sig.Signer,
 			Value: sig.Value,
 			Msg:   sig.Msg,
 		}
@@ -637,6 +642,7 @@ func CheckInFlight(messages []*protos.ViewData, f int, quorum int, N uint64, ver
 		// find possible proposals
 
 		if !vd.InFlightPrepared { // no prepared so isn't a possible proposal
+			noInFlightCount++
 			continue
 		}
 
@@ -652,11 +658,6 @@ func CheckInFlight(messages []*protos.ViewData, f int, quorum int, N uint64, ver
 			// this is not a proposal we have seen before
 			possibleProposals = append(possibleProposals, &possibleProposal{proposal: vd.InFlightProposal})
 		}
-	}
-
-	// condition B holds
-	if noInFlightCount >= quorum { // there is a quorum of messages that support that there is no in flight proposal
-		return true, true, nil, nil
 	}
 
 	// fill out info on all possible proposals
@@ -699,6 +700,11 @@ func CheckInFlight(messages []*protos.ViewData, f int, quorum int, N uint64, ver
 		return true, false, possibleProposals[agreed].proposal, nil
 	}
 
+	// condition B holds
+	if noInFlightCount >= quorum { // there is a quorum of messages that support that there is no prepared in flight proposal
+		return true, true, nil, nil
+	}
+
 	return false, false, nil, nil
 }
 
@@ -731,7 +737,7 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 		}
 		nodesMap[svd.Signer] = struct{}{}
 
-		if err := v.Verifier.VerifySignature(types.Signature{Id: svd.Signer, Value: svd.Signature, Msg: svd.RawViewData}); err != nil {
+		if err := v.Verifier.VerifySignature(types.Signature{ID: svd.Signer, Value: svd.Signature, Msg: svd.RawViewData}); err != nil {
 			v.Logger.Warnf("Node %d is processing newView message, but signature of viewData %v is invalid, error: %v", v.SelfID, svd, err)
 			continue
 		}
@@ -823,7 +829,7 @@ func (v *ViewChanger) commitLastDecision(lastDecisionSequence uint64, lastDecisi
 	signatures := make([]types.Signature, 0)
 	for _, sig := range lastDecisionSigs {
 		signature := types.Signature{
-			Id:    sig.Signer,
+			ID:    sig.Signer,
 			Value: sig.Value,
 			Msg:   sig.Msg,
 		}
@@ -953,7 +959,7 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) {
 				Digest: v.inFlightView.inFlightProposal.Digest(),
 				Seq:    v.inFlightView.ProposalSequence,
 				Signature: &protos.Signature{
-					Signer: v.inFlightView.myProposalSig.Id,
+					Signer: v.inFlightView.myProposalSig.ID,
 					Value:  v.inFlightView.myProposalSig.Value,
 					Msg:    v.inFlightView.myProposalSig.Msg,
 				},

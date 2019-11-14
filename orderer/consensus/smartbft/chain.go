@@ -267,7 +267,7 @@ func (c *BFTChain) Deliver(proposal types.Proposal, signatures []types.Signature
 	for _, s := range signatures {
 		sig := &Signature{}
 		if err := sig.Unmarshal(s.Msg); err != nil {
-			c.Logger.Errorf("Failed unmarshaling signature from %d: %v", s.Id, err)
+			c.Logger.Errorf("Failed unmarshaling signature from %d: %v", s.ID, err)
 			c.Logger.Errorf("Offending signature Msg: %s", base64.StdEncoding.EncodeToString(s.Msg))
 			c.Logger.Errorf("Offending signature Value: %s", base64.StdEncoding.EncodeToString(s.Value))
 			c.Logger.Errorf("Halting chain.")
@@ -437,7 +437,7 @@ func (c *BFTChain) blockToDecision(block *common.Block) *types.Decision {
 		signatures = append(signatures, types.Signature{
 			Msg:   sig.Marshal(),
 			Value: sigMD.Signature,
-			Id:    id,
+			ID:    id,
 		})
 	}
 
