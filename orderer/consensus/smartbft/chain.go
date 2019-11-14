@@ -42,8 +42,8 @@ type BlockPuller interface {
 	Close()
 }
 
-// Config consensus specific configuration parameters
-type Config struct {
+// WALConfig consensus specific configuration parameters from orderer.yaml; for SmartBFT only WALDir is relevant.
+type WALConfig struct {
 	WALDir            string // WAL data of <my-channel> is stored in WALDir/<my-channel>
 	SnapDir           string // Snapshots of <my-channel> are stored in SnapDir/<my-channel>
 	EvictionSuspicion string // Duration threshold that the node samples in order to suspect its eviction from the channel.
@@ -53,7 +53,7 @@ type Config struct {
 // BFT smart library
 type BFTChain struct {
 	channel          string
-	SelfID           uint64
+	Config           smartbft.Configuration
 	BlockPuller      BlockPuller
 	Comm             cluster.Communicator
 	SignerSerializer identity.SignerSerializer
@@ -74,7 +74,7 @@ type BFTChain struct {
 
 // NewChain creates new BFT Smart chain
 func NewChain(
-	selfID uint64,
+	config smartbft.Configuration,
 	walDir string,
 	blockPuller BlockPuller,
 	comm cluster.Communicator,
@@ -83,7 +83,7 @@ func NewChain(
 	remoteNodes []cluster.RemoteNode,
 	id2Identities NodeIdentitiesByID,
 	support consensus.ConsenterSupport,
-) *BFTChain {
+) (*BFTChain, error) {
 
 	requestInspector := &RequestInspector{
 		ValidateIdentityStructure: func(_ *msp.SerializedIdentity) error {
@@ -95,13 +95,13 @@ func NewChain(
 	for _, n := range remoteNodes {
 		nodes = append(nodes, n.ID)
 	}
-	nodes = append(nodes, selfID)
+	nodes = append(nodes, config.SelfID)
 
 	logger := flogging.MustGetLogger("orderer.consensus.smartbft.chain").With(zap.String("channel", support.ChainID()))
 
 	c := &BFTChain{
 		channel:          support.ChainID(),
-		SelfID:           selfID,
+		Config:           config,
 		WALDir:           walDir,
 		Comm:             comm,
 		support:          support,
@@ -127,7 +127,11 @@ func NewChain(
 	// Setup communication with list of remotes notes for the new channel
 	c.Comm.Configure(c.support.ChainID(), c.RemoteNodes)
 
-	return c
+	if err := c.consensus.ValidateConfiguration(); err != nil {
+		return nil, errors.Wrap(err, "failed to verify SmartBFT-Go configuration")
+	}
+
+	return c, nil
 }
 
 func bftSmartConsensusBuild(
@@ -165,10 +169,6 @@ func bftSmartConsensusBuild(
 	channelDecorator := zap.String("channel", c.support.ChainID())
 	logger := flogging.MustGetLogger("orderer.consensus.smartbft.consensus").With(channelDecorator)
 
-	config := smartbft.DefaultConfig
-	config.LeaderHeartbeatTimeout = time.Second * 10
-	config.SelfID = c.SelfID
-
 	c.assembler = &Assembler{
 		LastBlock:          c.lastBlock,
 		LastConfigBlockNum: c.lastConfigBlock.Header.Number,
@@ -177,11 +177,11 @@ func bftSmartConsensusBuild(
 	}
 
 	consensus := &smartbft.Consensus{
-		Config:   config,
+		Config:   c.Config,
 		Logger:   logger,
 		Verifier: c.verifier,
 		Signer: &Signer{
-			ID:                 c.SelfID,
+			ID:                 c.Config.SelfID,
 			Logger:             flogging.MustGetLogger("orderer.consensus.smartbft.signer").With(channelDecorator),
 			SignerSerializer:   c.SignerSerializer,
 			LastConfigBlockNum: c.verifier.lastConfigBlockNum,
@@ -296,7 +296,7 @@ func (c *BFTChain) Deliver(proposal types.Proposal, signatures []types.Signature
 		defer c.assembler.Unlock()
 		c.assembler.LastBlock = block
 	}()
-	c.Logger.Debugf("Delivering proposal, writing block %d to the ledger, node id %d", block.Header.Number, c.SelfID)
+	c.Logger.Debugf("Delivering proposal, writing block %d to the ledger, node id %d", block.Header.Number, c.Config.SelfID)
 	if protoutil.IsConfigBlock(block) {
 		defer c.updateLastConfigBlockNum(block.Header.Number)
 		defer func() {
@@ -356,7 +356,7 @@ func (c *BFTChain) submit(env *common.Envelope, configSeq uint64) error {
 		return errors.Wrapf(err, "failed to marshal request envelope")
 	}
 
-	c.Logger.Debugf("Consensus.SubmitRequest, node id %d", c.SelfID)
+	c.Logger.Debugf("Consensus.SubmitRequest, node id %d", c.Config.SelfID)
 	c.consensus.SubmitRequest(reqBytes)
 	return nil
 }

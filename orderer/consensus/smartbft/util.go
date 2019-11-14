@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	pkgconsensus "github.com/SmartBFT-Go/consensus/pkg/consensus"
 	"github.com/SmartBFT-Go/consensus/pkg/types"
 	"github.com/SmartBFT-Go/consensus/smartbftprotos"
 	"github.com/golang/protobuf/proto"
@@ -103,6 +104,55 @@ func getViewMetadataFromBlock(block *common.Block) (smartbftprotos.ViewMetadata,
 	}
 
 	return viewMetadata, nil
+}
+
+func configFromMetadataOptions(selfID uint64, options *smartbft.Options) (pkgconsensus.Configuration, error) {
+	var err error
+
+	config := pkgconsensus.DefaultConfig
+	config.SelfID = selfID
+
+	if options == nil {
+		return config, errors.New("config metadata options field is nil")
+	}
+
+	config.RequestBatchMaxCount = options.RequestBatchMaxCount
+	config.RequestBatchMaxBytes = options.RequestBatchMaxBytes
+	if config.RequestBatchMaxInterval, err = time.ParseDuration(options.RequestBatchMaxInterval); err != nil {
+		return config, errors.Wrap(err, "bad config metadata option RequestBatchMaxInterval")
+	}
+	config.IncomingMessageBufferSize = options.IncomingMessageBufferSize
+	config.RequestPoolSize = options.RequestPoolSize
+	if config.RequestForwardTimeout, err = time.ParseDuration(options.RequestForwardTimeout); err != nil {
+		return config, errors.Wrap(err, "bad config metadata option RequestForwardTimeout")
+	}
+	if config.RequestComplainTimeout, err = time.ParseDuration(options.RequestComplainTimeout); err != nil {
+		return config, errors.Wrap(err, "bad config metadata option RequestComplainTimeout")
+	}
+	if config.RequestAutoRemoveTimeout, err = time.ParseDuration(options.RequestAutoRemoveTimeout); err != nil {
+		return config, errors.Wrap(err, "bad config metadata option RequestAutoRemoveTimeout")
+	}
+	if config.ViewChangeResendInterval, err = time.ParseDuration(options.ViewChangeResendInterval); err != nil {
+		return config, errors.Wrap(err, "bad config metadata option ViewChangeResendInterval")
+	}
+	if config.ViewChangeTimeout, err = time.ParseDuration(options.ViewChangeTimeout); err != nil {
+		return config, errors.Wrap(err, "bad config metadata option ViewChangeTimeout")
+	}
+	if config.LeaderHeartbeatTimeout, err = time.ParseDuration(options.LeaderHeartbeatTimeout); err != nil {
+		return config, errors.Wrap(err, "bad config metadata option LeaderHeartbeatTimeout")
+	}
+	config.LeaderHeartbeatCount = options.LeaderHeartbeatCount
+	if config.CollectTimeout, err = time.ParseDuration(options.CollectTimeout); err != nil {
+		return config, errors.Wrap(err, "bad config metadata option CollectTimeout")
+	}
+	config.SyncOnStart = options.SyncOnStart
+	config.SpeedUpViewChange = options.SpeedUpViewChange
+
+	if err = config.Validate(); err != nil {
+		return config, errors.Wrap(err, "config validation failed")
+	}
+
+	return config, nil
 }
 
 // RequestInspector inspects incomming requests and validates serialized identity
