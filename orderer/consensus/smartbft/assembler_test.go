@@ -34,11 +34,10 @@ func TestAssembler(t *testing.T) {
 	ledger.On("Block", uint64(10)).Return(lastConfigBlock)
 
 	for _, testCase := range []struct {
-		name              string
-		panicVal          string
-		requests          [][]byte
-		expectedProposal  types.Proposal
-		expectedRemainder [][]byte
+		name             string
+		panicVal         string
+		requests         [][]byte
+		expectedProposal types.Proposal
 	}{
 		{
 			name:     "Must contain at least one request",
@@ -52,22 +51,19 @@ func TestAssembler(t *testing.T) {
 			requests: [][]byte{{1, 2, 3}},
 		},
 		{
-			name:              "Config transaction is first in the batch",
-			requests:          [][]byte{configTx, nonConfigTx},
-			expectedProposal:  proposalFromRequests(20, 10, lastHash, []byte("metadata"), configTx),
-			expectedRemainder: [][]byte{nonConfigTx},
+			name:             "Config transaction is first in the batch",
+			requests:         [][]byte{configTx, nonConfigTx},
+			expectedProposal: proposalFromRequests(20, 10, lastHash, []byte("metadata"), configTx),
 		},
 		{
-			name:              "Config transaction is in the middle of the batch",
-			requests:          [][]byte{nonConfigTx, configTx, nonConfigTx},
-			expectedProposal:  proposalFromRequests(20, 10, lastHash, []byte("metadata"), nonConfigTx),
-			expectedRemainder: [][]byte{configTx, nonConfigTx},
+			name:             "Config transaction is in the middle of the batch",
+			requests:         [][]byte{nonConfigTx, configTx, nonConfigTx},
+			expectedProposal: proposalFromRequests(20, 10, lastHash, []byte("metadata"), nonConfigTx),
 		},
 		{
-			name:              "Config transaction is at the end of the batch",
-			requests:          [][]byte{nonConfigTx, nonConfigTx, configTx},
-			expectedProposal:  proposalFromRequests(20, 10, lastHash, []byte("metadata"), nonConfigTx, nonConfigTx),
-			expectedRemainder: [][]byte{configTx},
+			name:             "Config transaction is at the end of the batch",
+			requests:         [][]byte{nonConfigTx, nonConfigTx, configTx},
+			expectedProposal: proposalFromRequests(20, 10, lastHash, []byte("metadata"), nonConfigTx, nonConfigTx),
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -89,9 +85,8 @@ func TestAssembler(t *testing.T) {
 				return
 			}
 
-			prop, remainder := assembler.AssembleProposal([]byte("metadata"), testCase.requests)
+			prop := assembler.AssembleProposal([]byte("metadata"), testCase.requests)
 			assert.Equal(t, testCase.expectedProposal, prop)
-			assert.Equal(t, testCase.expectedRemainder, remainder)
 		})
 	}
 

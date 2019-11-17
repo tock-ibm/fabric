@@ -73,14 +73,14 @@ func TestVerifySignature(t *testing.T) {
 
 	t.Run("identity doesn't exist", func(t *testing.T) {
 		err := v.VerifySignature(types.Signature{
-			Id: 2,
+			ID: 2,
 		})
 		assert.EqualError(t, err, "node with id of 2 doesn't exist")
 	})
 
 	t.Run("signature doesn't verify", func(t *testing.T) {
 		err := v.VerifySignature(types.Signature{
-			Id: 3,
+			ID: 3,
 		})
 		assert.EqualError(t, err, "bad signature")
 	})
@@ -143,7 +143,7 @@ func TestVerifyConsenterSig(t *testing.T) {
 			id2Identity:        map[uint64][]byte{3: {0, 2, 4, 6}},
 			signatureMutator: func(signature types.Signature) types.Signature {
 				return types.Signature{
-					Id:    signature.Id,
+					ID:    signature.ID,
 					Value: signature.Value,
 					Msg:   []byte{1, 2, 3},
 				}
@@ -160,7 +160,7 @@ func TestVerifyConsenterSig(t *testing.T) {
 				sig.Unmarshal(signature.Msg)
 				sig.OrdererBlockMetadata = nil
 				return types.Signature{
-					Id:    signature.Id,
+					ID:    signature.ID,
 					Value: signature.Value,
 					Msg:   sig.Marshal(),
 				}
@@ -177,7 +177,7 @@ func TestVerifyConsenterSig(t *testing.T) {
 				sig.Unmarshal(signature.Msg)
 				sig.BlockHeader = nil
 				return types.Signature{
-					Id:    signature.Id,
+					ID:    signature.ID,
 					Value: signature.Value,
 					Msg:   sig.Marshal(),
 				}
@@ -194,7 +194,7 @@ func TestVerifyConsenterSig(t *testing.T) {
 				sig.Unmarshal(signature.Msg)
 				sig.SignatureHeader = nil
 				return types.Signature{
-					Id:    signature.Id,
+					ID:    signature.ID,
 					Value: signature.Value,
 					Msg:   sig.Marshal(),
 				}
@@ -211,7 +211,7 @@ func TestVerifyConsenterSig(t *testing.T) {
 				sig.Unmarshal(signature.Msg)
 				sig.SignatureHeader = []byte{1, 2, 3}
 				return types.Signature{
-					Id:    signature.Id,
+					ID:    signature.ID,
 					Value: signature.Value,
 					Msg:   sig.Marshal(),
 				}
@@ -228,7 +228,7 @@ func TestVerifyConsenterSig(t *testing.T) {
 				sig.Unmarshal(signature.Msg)
 				sig.OrdererBlockMetadata = []byte{1, 2, 3}
 				return types.Signature{
-					Id:    signature.Id,
+					ID:    signature.ID,
 					Value: signature.Value,
 					Msg:   sig.Marshal(),
 				}
@@ -369,7 +369,7 @@ func TestVerifyConsenterSig(t *testing.T) {
 				ViewId:         2,
 			})
 
-			proposal, _ := assembler.AssembleProposal(md, [][]byte{nonConfigTx})
+			proposal := assembler.AssembleProposal(md, [][]byte{nonConfigTx})
 
 			signature := *s.SignProposal(proposal)
 			if testCase.signatureMutator != nil {
@@ -554,7 +554,7 @@ func TestVerifyProposal(t *testing.T) {
 				ViewId:         2,
 			})
 
-			proposal, _ := assembler.AssembleProposal(md, [][]byte{nonConfigTx})
+			proposal := assembler.AssembleProposal(md, [][]byte{nonConfigTx})
 
 			// Maybe mutate the BFT metadata
 			proposal.Metadata = testCase.bftMetadataMutator(proposal.Metadata)

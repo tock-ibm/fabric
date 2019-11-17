@@ -260,10 +260,6 @@ func (c *Controller) ProcessMessages(sender uint64, m *protos.Message) {
 		c.respondToStateTransferRequest(sender)
 	case *protos.Message_StateTransferResponse:
 		c.Collector.HandleMessage(sender, m)
-
-	case *protos.Message_Error:
-		c.Logger.Debugf("Error message handling not yet implemented, ignoring message: %v, from %d", m, sender)
-
 	default:
 		c.Logger.Warnf("Unexpected message type, ignoring")
 	}
@@ -404,11 +400,7 @@ func (c *Controller) propose() {
 		return
 	}
 	metadata := c.currView.GetMetadata()
-	proposal, remainder := c.Assembler.AssembleProposal(metadata, nextBatch)
-	if len(remainder) != 0 {
-		c.Logger.Debugf("Assembler packed only some of the batch TX's into the proposal, length of: batch=%d, remainder=%d, in-proposal=%d",
-			len(nextBatch), len(remainder), len(nextBatch)-len(remainder))
-	}
+	proposal := c.Assembler.AssembleProposal(metadata, nextBatch)
 	c.currView.Propose(proposal)
 }
 
@@ -578,8 +570,24 @@ func (c *Controller) relinquishLeaderToken() {
 	}
 }
 
+func (c *Controller) syncOnStart(startViewNumber uint64, startProposalSequence uint64) viewInfo {
+	c.sync()
+	info := viewInfo{startViewNumber, startProposalSequence}
+	select {
+	case newViewSeq := <-c.viewChange:
+		if newViewSeq.viewNumber > startViewNumber {
+			info.viewNumber = newViewSeq.viewNumber
+		}
+		if newViewSeq.proposalSeq > startProposalSequence {
+			info.proposalSeq = newViewSeq.proposalSeq
+		}
+	default:
+	}
+	return info
+}
+
 // Start the controller
-func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64) {
+func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64, syncOnStart bool) {
 	c.controllerDone.Add(1)
 	c.stopOnce = sync.Once{}
 	c.syncChan = make(chan struct{}, 1)
@@ -594,8 +602,16 @@ func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64)
 	c.Logger.Debugf("The number of nodes (N) is %d, F is %d, and the quorum size is %d", c.N, F, Q)
 	c.quorum = Q
 
-	c.currViewNumber = startViewNumber
-	c.startView(startProposalSequence)
+	info := viewInfo{
+		viewNumber:  startViewNumber,
+		proposalSeq: startProposalSequence,
+	}
+	if syncOnStart {
+		info = c.syncOnStart(startViewNumber, startProposalSequence)
+	}
+
+	c.currViewNumber = info.viewNumber
+	c.startView(info.proposalSeq)
 	if iAm, _ := c.iAmTheLeader(); iAm {
 		c.acquireLeaderToken()
 	}

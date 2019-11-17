@@ -50,7 +50,7 @@ func (s *Signer) SignProposal(proposal types.Proposal) *types.Signature {
 
 	signature := protoutil.SignOrPanic(s.SignerSerializer, sig.AsBytes(s.SignerSerializer))
 	return &types.Signature{
-		Id:    s.ID,
+		ID:    s.ID,
 		Value: signature,
 		Msg:   sig.Marshal(),
 	}

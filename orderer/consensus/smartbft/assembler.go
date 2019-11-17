@@ -38,7 +38,7 @@ type Assembler struct {
 	LastBlock          *common.Block
 }
 
-func (a *Assembler) AssembleProposal(metadata []byte, requests [][]byte) (nextProp types.Proposal, remainder [][]byte) {
+func (a *Assembler) AssembleProposal(metadata []byte, requests [][]byte) (nextProp types.Proposal) {
 	a.RLock()
 	lastConfigBlockNum := a.LastConfigBlockNum
 	lastBlock := a.LastBlock
@@ -76,7 +76,7 @@ func (a *Assembler) AssembleProposal(metadata []byte, requests [][]byte) (nextPr
 		VerificationSequence: int64(a.VerificationSeq()),
 	}
 
-	return prop, requests[len(batchedRequests):]
+	return prop
 }
 
 func singleConfigTxOrSeveralNonConfigTx(requests [][]byte, logger PanicLogger) [][]byte {

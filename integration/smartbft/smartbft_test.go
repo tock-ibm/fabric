@@ -166,9 +166,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			assertBlockReception(map[string]int{"systemchannel": 0}, network.Orderers, peer, network)
 
 			By("Waiting for followers to see the leader")
-			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			channel := "testchannel1"
 
@@ -205,9 +205,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Starting view with number 0 and sequence 2"))
 
 			By("Waiting communication to be established from the leader")
-			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			invokeQuery(network, peer, orderer, channel, 50)
 			time.Sleep(time.Second * 2)
@@ -256,9 +256,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			assertBlockReception(map[string]int{"systemchannel": 0}, network.Orderers, peer, network)
 
 			By("Waiting for followers to see the leader")
-			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			channel := "testchannel1"
 
@@ -295,7 +295,7 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Starting view with number 0 and sequence 2"))
 
 			By("Waiting communication to be established from the leader")
-			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0 channel=testchannel1"))
+			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1 channel=testchannel1"))
 
 			By("Waiting for follower to understand it is behind")
 			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Leader's sequence is 5 and ours is 2"))
@@ -335,9 +335,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			assertBlockReception(map[string]int{"systemchannel": 0}, network.Orderers, peer, network)
 
 			By("Waiting for followers to see the leader")
-			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			channel := "testchannel1"
 
@@ -405,7 +405,7 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 				nwo.UpdateSmartBFTMetadata(network, peer, orderer, channel, func(md *smartbft.ConfigMetadata) {
 					md.Consenters = append(md.Consenters, &smartbft.Consenter{
 						MspId:       "OrdererMSP",
-						ConsenterId: 4,
+						ConsenterId: 5,
 						Identity: protoutil.MarshalOrPanic(&msp.SerializedIdentity{
 							Mspid:   "OrdererMSP",
 							IdBytes: ordererIdentity,
@@ -441,9 +441,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			restart(4)
 
 			By("Waiting for followers to see the leader")
-			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			By("Planting last config block in the orderer's file system")
 			configBlock := nwo.GetConfigBlock(network, peer, orderer, "systemchannel")
@@ -458,7 +458,7 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			Eventually(proc.Ready(), network.EventuallyTimeout).Should(BeClosed())
 
 			By("Waiting for the added orderer to see the leader")
-			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(runner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			By("Exit maintenance mode")
 			for _, channel := range []string{"systemchannel", "testchannel1"} {
@@ -508,9 +508,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			By("Restarting all orderers")
 			restart(5)
 			By("Waiting for followers to see the leader")
-			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			By("Exit maintenance mode")
 			for _, channel := range []string{"systemchannel", "testchannel1"} {
@@ -522,9 +522,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			}, network.Orderers[:4], peer, network)
 
 			By("Ensuring the leader talks to existing followers")
-			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			By("Transact again")
 			invokeQuery(network, peer, orderer, channel, 40)
@@ -558,9 +558,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			Eventually(peerProcesses.Ready(), network.EventuallyTimeout).Should(BeClosed())
 
 			By("Waiting for followers to see the leader")
-			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
-			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 0"))
+			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
 			peer := network.Peer("Org1", "peer0")
 
