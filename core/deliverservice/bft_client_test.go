@@ -9,6 +9,7 @@ package deliverclient
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -293,8 +294,14 @@ func TestBFTDeliverClient_Failover(t *testing.T) {
 		}
 	}()
 
+	time.Sleep(time.Second)
 	blockEP, err := waitForBlockEP(bc)
 	assert.NoError(t, err)
+
+	osnMocks, err := detectOSNConnections(true, osnMapValues(osMap)...)
+	assert.NoError(t, err)
+	assert.Equal(t, strings.Split(blockEP, ":")[1], strings.Split(osnMocks[0].Addr().String(), ":")[1])
+
 	// one normal block
 	for _, os := range osMap {
 		os.SendBlock(5)
@@ -496,4 +503,12 @@ func waitForBlockEP(bc *bftDeliveryClient) (string, error) {
 			return "", errors.New("timeout: no block receiver")
 		}
 	}
+}
+
+func osnMapValues(m map[string]*mocks.Orderer) []*mocks.Orderer {
+	s := make([]*mocks.Orderer, 0)
+	for _, v := range m {
+		s = append(s, v)
+	}
+	return s
 }

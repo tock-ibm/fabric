@@ -160,7 +160,7 @@ func (c *bftDeliveryClient) Recv() (response *orderer.DeliverResponse, err error
 		c.closeBlockReceiver()
 		numRetries++
 		if numRetries%numEP == 0 { //double the back-off delay on every round of attempts.
-			dur := backOffDuration(2.0, uint(numRetries/numEP), bftMinBackoffDelay, bftMaxBackoffDelay)
+			dur := backOffDuration(2.0, uint(numRetries/numEP), c.minBackoffDelay, c.maxBackoffDelay)
 			bftLogger.Debugf("[%s] Got receive error: %s; going to retry another endpoint in: %s", c.chainID, err, dur)
 			backOffSleep(dur, c.stopChan)
 		} else {
@@ -194,12 +194,10 @@ func backOffDuration(base float64, exponent uint, minDur, maxDur time.Duration) 
 }
 
 func backOffSleep(backOffDur time.Duration, stopChan <-chan struct{}) {
-	backOffTimer := time.NewTimer(backOffDur)
 	select {
-	case <-backOffTimer.C:
+	case <-time.After(backOffDur):
 	case <-stopChan:
 	}
-	backOffTimer.Stop()
 }
 
 // Check block reception progress relative to header reception progress.
@@ -253,7 +251,7 @@ func (c *bftDeliveryClient) detectBlockCensorship() bool {
 	numEP := uint64(len(c.endpoints))
 	_, f := computeQuorum(numEP)
 	if numAhead > f {
-		bftLogger.Debugf("[%s] suspected block censorship: %d header receivers are ahead of block receiver, out of %d endpoints",
+		bftLogger.Warnf("[%s] suspected block censorship: %d header receivers are ahead of block receiver, out of %d endpoints",
 			c.chainID, numAhead, numEP)
 		return true
 	}
@@ -307,7 +305,8 @@ func (c *bftDeliveryClient) assignReceivers() (int, error) {
 	}
 
 	for _, ep := range hRcvToCreate {
-		headerReceiver := newBFTHeaderReceiver(c.chainID, ep.Endpoint, c.newHeaderClient(ep), c.msgCryptoVerifier)
+		headerReceiver := newBFTHeaderReceiver(c.chainID, ep.Endpoint, c.newHeaderClient(ep), c.msgCryptoVerifier,
+			c.minBackoffDelay, c.maxBackoffDelay)
 		c.headerReceivers[ep.Endpoint] = headerReceiver
 		bftLogger.Debugf("[%s] Created header receiver to: %s", c.chainID, ep.Endpoint)
 	}
@@ -375,15 +374,28 @@ func (c *bftDeliveryClient) closeBlockReceiver() {
 	}
 }
 
+func (c *bftDeliveryClient) LedgerHeight() (uint64, error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.nextBlockNumber, nil
+}
+
 // create a broadcastClient that delivers blocks
 func (c *bftDeliveryClient) newBlockClient(endpoint comm.EndpointCriteria) *broadcastClient {
 	requester := &blocksRequester{
 		tls:     viper.GetBool("peer.tls.enabled"),
 		chainID: c.chainID,
 	}
-	broadcastSetup := func(bd blocksprovider.BlocksDeliverer) error {
-		return requester.RequestBlocks(c.ledgerInfoProvider)
+
+	//Update the nextBlockNumber from the ledger, and then make sure the client request the nextBlockNumber,
+	// because that is what we expect in the Recv() loop.
+	if height, err := c.ledgerInfoProvider.LedgerHeight(); err == nil {
+		c.nextBlockNumber = height
 	}
+	broadcastSetup := func(bd blocksprovider.BlocksDeliverer) error {
+		return requester.RequestBlocks(c) // Do not ask the ledger directly, ask the bftDeliveryClient
+	}
+
 	backoffPolicy := func(attemptNum int, elapsedTime time.Duration) (time.Duration, bool) {
 		//Let block receivers give-up early so we can replace them with a header receiver
 		if elapsedTime >= c.reconnectBlockRcvTotalTimeThreshold {

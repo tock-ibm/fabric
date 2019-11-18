@@ -16,12 +16,13 @@ import (
 	"github.com/hyperledger/fabric/protos/orderer"
 )
 
-const bftHeaderMaxRetryDelay = time.Second * 10
 const bftHeaderWrongStatusThreshold = 10
 
 type bftHeaderReceiver struct {
 	mutex             sync.Mutex
 	chainID           string
+	minBackoffDelay   time.Duration
+	maxBackoffDelay   time.Duration
 	stop              bool
 	stopChan          chan struct{}
 	started           bool
@@ -37,6 +38,8 @@ func newBFTHeaderReceiver(
 	endpoint string,
 	client *broadcastClient,
 	msgVerifier MessageCryptoVerifier,
+	minBackOff time.Duration,
+	maxBackOff time.Duration,
 ) *bftHeaderReceiver {
 	hRcv := &bftHeaderReceiver{
 		chainID:           chainID,
@@ -44,6 +47,8 @@ func newBFTHeaderReceiver(
 		endpoint:          endpoint,
 		client:            client,
 		msgCryptoVerifier: msgVerifier,
+		minBackoffDelay:   minBackOff,
+		maxBackoffDelay:   maxBackOff,
 	}
 	return hRcv
 }
@@ -82,7 +87,7 @@ func (hr *bftHeaderReceiver) DeliverHeaders() {
 				errorStatusCounter = 0
 				bftLogger.Warningf("[%s] Got error %v", hr.chainID, t)
 			}
-			dur := backOffDuration(2.0, statusCounter, bftMinBackoffDelay, bftMaxBackoffDelay)
+			dur := backOffDuration(2.0, statusCounter, hr.minBackoffDelay, hr.maxBackoffDelay)
 			bftLogger.Debugf("[%s] going to retry in: %s", hr.chainID, dur)
 			backOffSleep(dur, hr.stopChan)
 			statusCounter++

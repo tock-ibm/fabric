@@ -148,7 +148,7 @@ func (o *Orderer) Deliver(stream orderer.AtomicBroadcast_DeliverServer) error {
 	seekInfo := &orderer.SeekInfo{}
 	_ = proto.Unmarshal(payload.Data, seekInfo)
 	assert.True(o.t, seekInfo.Behavior == orderer.SeekInfo_BLOCK_UNTIL_READY)
-	assert.Equal(o.t, atomic.LoadUint64(&o.nextExpectedSeek), seekInfo.Start.GetSpecified().Number)
+	assert.Equal(o.t, atomic.LoadUint64(&o.nextExpectedSeek), seekInfo.Start.GetSpecified().Number, "seekInfo=%v, Addr=%v", seekInfo, o.Addr())
 
 	o.mutex.Lock()
 	o.connCount++
