@@ -172,25 +172,20 @@ func (c *bftDeliveryClient) Recv() (response *orderer.DeliverResponse, err error
 	return nil, errClientClosing
 }
 
-func backOffDuration(base float64, exponent uint, minDur, maxDur time.Duration) (backOffDur time.Duration) {
+func backOffDuration(base float64, exponent uint, minDur, maxDur time.Duration) time.Duration {
 	if base < 1.0 {
 		base = 1.0
 	}
 	if minDur <= 0 {
-		minDur = time.Duration(1)
+		minDur = bftMinBackoffDelay
 	}
 	if maxDur < minDur {
 		maxDur = minDur
 	}
 
 	fDurNano := math.Pow(base, float64(exponent)) * float64(minDur.Nanoseconds())
-	if math.IsInf(fDurNano, 0) || math.IsNaN(fDurNano) || fDurNano > float64(maxDur.Nanoseconds()) {
-		backOffDur = maxDur
-	} else {
-		backOffDur = time.Duration(int64(fDurNano))
-	}
-
-	return backOffDur
+	fDurNano = math.Min(fDurNano, float64(maxDur.Nanoseconds()))
+	return time.Duration(fDurNano)
 }
 
 func backOffSleep(backOffDur time.Duration, stopChan <-chan struct{}) {

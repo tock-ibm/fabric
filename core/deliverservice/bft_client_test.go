@@ -190,6 +190,10 @@ func TestBFTDeliverClient_Censorship(t *testing.T) {
 
 	blockEP, err := waitForBlockEP(bc)
 	assert.NoError(t, err)
+	osnMocks, err := detectOSNConnections(true, osnMapValues(osMap)...)
+	assert.NoError(t, err)
+	assert.Equal(t, strings.Split(blockEP, ":")[1], strings.Split(osnMocks[0].Addr().String(), ":")[1])
+
 	// one normal block
 	beforeSend := time.Now()
 	for _, os := range osMap {
@@ -268,7 +272,6 @@ func TestBFTDeliverClient_Failover(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), getConnectionTimeout())
 		defer cancel()
 		return grpc.DialContext(ctx, endpoint.Endpoint, grpc.WithInsecure(), grpc.WithBlock())
-		//return grpc.Dial(endpoint.Endpoint, grpc.WithInsecure(), grpc.WithBlock())
 	}
 	var ledgerHeight uint64 = 5
 	ledgerInfoMock := &mocks.LedgerInfo{}
@@ -395,7 +398,6 @@ func TestBFTDeliverClient_UpdateEndpoints(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), getConnectionTimeout())
 		defer cancel()
 		return grpc.DialContext(ctx, endpoint.Endpoint, grpc.WithInsecure(), grpc.WithBlock())
-		//return grpc.Dial(endpoint.Endpoint, grpc.WithInsecure(), grpc.WithBlock())
 	}
 	var ledgerHeight uint64 = 5
 	ledgerInfoMock := &mocks.LedgerInfo{}
@@ -421,8 +423,11 @@ func TestBFTDeliverClient_UpdateEndpoints(t *testing.T) {
 		}
 	}()
 
-	_, err := waitForBlockEP(bc)
+	blockEP, err := waitForBlockEP(bc)
 	assert.NoError(t, err)
+	osnMocks, err := detectOSNConnections(true, osnMapValues(osMap)...)
+	assert.NoError(t, err)
+	assert.Equal(t, strings.Split(blockEP, ":")[1], strings.Split(osnMocks[0].Addr().String(), ":")[1])
 
 	// one normal block
 	beforeSend := time.Now()
