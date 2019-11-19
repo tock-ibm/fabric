@@ -1298,7 +1298,7 @@ func (n *Network) ReservePort() uint16 {
 func (n *Network) OrdererIndex(orderer *Orderer) int {
 	for i, o := range n.Orderers {
 		if orderer == o {
-			return i+1
+			return i + 1
 		}
 	}
 	return -1
