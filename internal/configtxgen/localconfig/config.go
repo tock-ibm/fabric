@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SmartBFT-Go/consensus/pkg/consensus"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/policies"
 	"github.com/hyperledger/fabric/common/viperutil"
@@ -215,7 +216,21 @@ var genesisDefaults = TopLevel{
 		},
 		SmartBFT: &smartbft.ConfigMetadata{
 			Options: &smartbft.Options{
-				Config: []byte{0},
+				RequestBatchMaxCount:      uint64(consensus.DefaultConfig.RequestBatchMaxCount),
+				RequestBatchMaxBytes:      uint64(consensus.DefaultConfig.RequestBatchMaxBytes),
+				RequestBatchMaxInterval:   consensus.DefaultConfig.RequestBatchMaxInterval.String(),
+				IncomingMessageBufferSize: uint64(consensus.DefaultConfig.IncomingMessageBufferSize),
+				RequestPoolSize:           uint64(consensus.DefaultConfig.RequestPoolSize),
+				RequestForwardTimeout:     consensus.DefaultConfig.RequestForwardTimeout.String(),
+				RequestComplainTimeout:    consensus.DefaultConfig.RequestComplainTimeout.String(),
+				RequestAutoRemoveTimeout:  consensus.DefaultConfig.RequestAutoRemoveTimeout.String(),
+				ViewChangeResendInterval:  consensus.DefaultConfig.ViewChangeResendInterval.String(),
+				ViewChangeTimeout:         consensus.DefaultConfig.ViewChangeTimeout.String(),
+				LeaderHeartbeatTimeout:    consensus.DefaultConfig.LeaderHeartbeatTimeout.String(),
+				LeaderHeartbeatCount:      uint64(consensus.DefaultConfig.LeaderHeartbeatCount),
+				CollectTimeout:            consensus.DefaultConfig.CollectTimeout.String(),
+				SyncOnStart:               consensus.DefaultConfig.SyncOnStart,
+				SpeedUpViewChange:         consensus.DefaultConfig.SpeedUpViewChange,
 			},
 		},
 	},

@@ -30,7 +30,7 @@ import (
 	"github.com/hyperledger/fabric/orderer/consensus/inactive"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/orderer"
-	"github.com/hyperledger/fabric/protos/orderer/smartbft"
+	protossmartbft "github.com/hyperledger/fabric/protos/orderer/smartbft"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 )
@@ -73,13 +73,13 @@ func New(
 
 	metrics := cluster.NewMetrics(metricsProvider)
 
-	var cfg Config
-	err := mapstructure.Decode(conf.Consensus, &cfg)
+	var walConfig WALConfig
+	err := mapstructure.Decode(conf.Consensus, &walConfig)
 	if err != nil {
 		logger.Panicf("Failed to decode consensus configuration: %s", err)
 	}
 
-	logger.Infof("XXX WAL Directory is %s", cfg.WALDir)
+	logger.Infof("XXX WAL Directory is %s", walConfig.WALDir)
 
 	consenter := &Consenter{
 		GetPolicyManager: pmr,
@@ -89,7 +89,7 @@ func New(
 		Cert:             srvConf.SecOpts.Certificate,
 		Chains:           r,
 		SignerSerializer: signerSerializer,
-		WALBaseDir:       cfg.WALDir,
+		WALBaseDir:       walConfig.WALDir,
 	}
 
 	consenter.Comm = &cluster.Comm{
@@ -141,12 +141,14 @@ func (c *Consenter) ReceiverByChain(channelID string) MessageReceiver {
 }
 
 func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *common.Metadata) (consensus.Chain, error) {
-	m := &smartbft.ConfigMetadata{}
+	m := &protossmartbft.ConfigMetadata{}
 	if err := proto.Unmarshal(support.SharedConfig().ConsensusMetadata(), m); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal consensus metadata")
 	}
+	if m.Options == nil {
+		return nil, errors.New("failed to retrieve consensus metadata options")
+	}
 
-	// TODO: Add options check
 	selfID, err := c.detectSelfID(m.Consenters)
 	if err != nil {
 		// TODO: Add inactive channel tracker
@@ -189,16 +191,18 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 		c.Logger.Panicf("Failed initializing block puller")
 	}
 
-	return NewChain(selfID,
-		path.Join(c.WALBaseDir, support.ChainID()),
-		puller,
-		c.Comm,
-		c.SignerSerializer,
-		c.GetPolicyManager(support.ChainID()),
-		nodes,
-		id2Identies,
-		support,
-	), nil
+	config, err := configFromMetadataOptions(selfID, m.Options)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed parsing smartbft configuration")
+	}
+	c.Logger.Debugf("SmartBFT-Go config: %v", config)
+
+	chain, err := NewChain(config, path.Join(c.WALBaseDir, support.ChainID()), puller, c.Comm, c.SignerSerializer, c.GetPolicyManager(support.ChainID()), nodes, id2Identies, support)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed creating a new BFTChain")
+	}
+
+	return chain, nil
 }
 
 func (c *Consenter) pemToDER(pemBytes []byte, id uint64, certType string) ([]byte, error) {
@@ -210,7 +214,7 @@ func (c *Consenter) pemToDER(pemBytes []byte, id uint64, certType string) ([]byt
 	return bl.Bytes, nil
 }
 
-func (c *Consenter) detectSelfID(consenters []*smartbft.Consenter) (uint64, error) {
+func (c *Consenter) detectSelfID(consenters []*protossmartbft.Consenter) (uint64, error) {
 	var serverCertificates []string
 	for _, cst := range consenters {
 		serverCertificates = append(serverCertificates, string(cst.ServerTlsCert))
