@@ -197,7 +197,7 @@ func (bw *BlockWriter) commitBlock(encodedMetadataValue []byte) {
 		bw.lastBlock.Metadata.Metadata[cb.BlockMetadataIndex_ORDERER] = protoutil.MarshalOrPanic(&cb.Metadata{Value: encodedMetadataValue})
 	}
 	bw.addLastConfigSignature(bw.lastBlock)
-	if bw.lastBlock.Metadata.Metadata[cb.BlockMetadataIndex_SIGNATURES] == nil {
+	if len(bw.lastBlock.Metadata.Metadata[cb.BlockMetadataIndex_SIGNATURES]) == 0 {
 		bw.addBlockSignature(bw.lastBlock)
 	}
 
