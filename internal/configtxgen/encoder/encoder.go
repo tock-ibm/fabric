@@ -13,6 +13,7 @@ import (
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/genesis"
 	"github.com/hyperledger/fabric/common/policies"
+	"github.com/hyperledger/fabric/common/policies/orderer"
 	"github.com/hyperledger/fabric/common/util"
 	genesisconfig "github.com/hyperledger/fabric/internal/configtxgen/localconfig"
 	"github.com/hyperledger/fabric/internal/configtxlator/update"
@@ -54,6 +55,9 @@ const (
 
 	// ImplicitMetaPolicyType is the 'Type' string for implicit meta policies
 	ImplicitMetaPolicyType = "ImplicitMeta"
+
+	// ImplicitOrdererPolicyType is the 'Type' string for implicit orderer policies
+	ImplicitOrdererPolicyType = "ImplicitOrderer"
 )
 
 func addValue(cg *cb.ConfigGroup, value channelconfig.ConfigValue, modPolicy string) {
@@ -106,6 +110,18 @@ func AddPolicies(cg *cb.ConfigGroup, policyMap map[string]*genesisconfig.Policy,
 				Policy: &cb.Policy{
 					Type:  int32(cb.Policy_SIGNATURE),
 					Value: protoutil.MarshalOrPanic(sp),
+				},
+			}
+		case ImplicitOrdererPolicyType:
+			iop, err := orderer.NewPolicyFromString(policy.Rule)
+			if err != nil {
+				return errors.Wrapf(err, "invalid signature policy rule '%s'", policy.Rule)
+			}
+			cg.Policies[policyName] = &cb.ConfigPolicy{
+				ModPolicy: modPolicy,
+				Policy: &cb.Policy{
+					Type:  int32(cb.Policy_IMPLICIT_ORDERER),
+					Value: protoutil.MarshalOrPanic(iop),
 				},
 			}
 		default:

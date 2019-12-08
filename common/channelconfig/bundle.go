@@ -11,6 +11,7 @@ import (
 	"github.com/hyperledger/fabric/common/configtx"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/policies"
+	"github.com/hyperledger/fabric/common/policies/orderer"
 	"github.com/hyperledger/fabric/msp"
 	cb "github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protoutil"
@@ -198,7 +199,13 @@ func NewBundle(channelID string, config *cb.Config) (*Bundle, error) {
 		case cb.Policy_SIGNATURE:
 			policyProviderMap[pType] = cauthdsl.NewPolicyProvider(channelConfig.MSPManager())
 		case cb.Policy_MSP:
-			// Add hook for MSP Handler here
+		// Add hook for MSP Handler here
+		case cb.Policy_IMPLICIT_ORDERER:
+			policyProviderMap[pType] = orderer.NewPolicyProvider(
+				channelConfig.MSPManager(),
+				channelConfig.OrdererConfig().ConsensusType(),
+				channelConfig.OrdererConfig().ConsensusMetadata(),
+			)
 		}
 	}
 
