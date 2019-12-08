@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/hyperledger/fabric/common/crypto"
 	"sort"
 	"time"
 
@@ -518,7 +519,11 @@ func (c *BFTChain) blockToID2Identities(block *common.Block) NodeIdentitiesByID 
 	}
 	id2Identies := map[uint64][]byte{}
 	for _, consenter := range m.Consenters {
-		id2Identies[consenter.ConsenterId] = SanitizeIdentity(consenter.Identity, c.Logger)
+		sanitizedID, err := crypto.SanitizeIdentity(consenter.Identity)
+		if err != nil {
+			c.Logger.Panicf("Failed to sanitize identity: %v", err)
+		}
+		id2Identies[consenter.ConsenterId] = sanitizedID
 	}
 	return id2Identies
 }
