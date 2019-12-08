@@ -120,6 +120,7 @@ func NewBlocksProvider(chainID string, client streamClient, gossip GossipService
 func (b *blocksProviderImpl) DeliverBlocks() {
 	errorStatusCounter := 0
 	statusCounter := 0
+	verErrCounter := 0
 	defer b.client.Close()
 	for !b.isDone() {
 		msg, err := b.client.Recv()
@@ -129,6 +130,8 @@ func (b *blocksProviderImpl) DeliverBlocks() {
 		}
 		switch t := msg.Type.(type) {
 		case *orderer.DeliverResponse_Status:
+			verErrCounter = 0
+
 			if t.Status == common.Status_SUCCESS {
 				logger.Warningf("[%s] ERROR! Received success for a seek that should never complete", b.chainID)
 				return
@@ -159,13 +162,29 @@ func (b *blocksProviderImpl) DeliverBlocks() {
 
 			marshaledBlock, err := proto.Marshal(t.Block)
 			if err != nil {
-				logger.Errorf("[%s] Error serializing block with sequence number %d, due to %s", b.chainID, blockNum, err)
+				logger.Errorf("[%s] Error serializing block with sequence number %d, due to %s; Disconnecting client from orderer.", b.chainID, blockNum, err)
+				maxDelay := float64(maxRetryDelay)
+				currDelay := float64(time.Duration(math.Pow(2, float64(verErrCounter))) * 100 * time.Millisecond)
+				time.Sleep(time.Duration(math.Min(maxDelay, currDelay)))
+				if currDelay < maxDelay {
+					verErrCounter++
+				}
+				b.client.Disconnect()
 				continue
 			}
 			if err := b.mcs.VerifyBlock(gossipcommon.ChainID(b.chainID), blockNum, marshaledBlock); err != nil {
-				logger.Errorf("[%s] Error verifying block with sequnce number %d, due to %s", b.chainID, blockNum, err)
+				logger.Errorf("[%s] Error verifying block with sequnce number %d, due to %s; Disconnecting client from orderer.", b.chainID, blockNum, err)
+				maxDelay := float64(maxRetryDelay)
+				currDelay := float64(time.Duration(math.Pow(2, float64(verErrCounter))) * 100 * time.Millisecond)
+				time.Sleep(time.Duration(math.Min(maxDelay, currDelay)))
+				if currDelay < maxDelay {
+					verErrCounter++
+				}
+				b.client.Disconnect()
 				continue
 			}
+
+			verErrCounter = 0
 
 			numberOfPeers := len(b.gossip.PeersOfChannel(gossipcommon.ChainID(b.chainID)))
 			// Create payload with a block received
