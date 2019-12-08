@@ -258,11 +258,13 @@ func buildVerifier(
 		ReqInspector:          requestInspector,
 		Logger:                logger,
 		Id2Identity:           id2Identities,
-		BlockVerifier: &cluster.BlockValidationPolicyVerifier{
-			Logger:    logger,
-			Channel:   support.ChainID(),
-			PolicyMgr: policyManager,
+
+		ConsenterVerifier: &consenterVerifier{
+			logger:        logger,
+			channel:       support.ChainID(),
+			policyManager: policyManager,
 		},
+
 		AccessController: &chainACL{
 			policyManager: policyManager,
 			Logger:        logger,

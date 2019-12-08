@@ -110,8 +110,8 @@ func TestVerifyConsenterSig(t *testing.T) {
 		},
 	}
 
-	bv := &mocks.BlockVerifier{}
-	bv.On("VerifyBlockSignature", mock.Anything, mock.Anything).Return(errors.New("bad signature"))
+	cv := &mocks.ConsenterVerifier{}
+	cv.On("Evaluate", mock.Anything).Return(errors.New("bad signature"))
 
 	lastHash := hex.EncodeToString(protoutil.BlockHeaderHash(lastBlock.Header))
 
@@ -382,7 +382,7 @@ func TestVerifyConsenterSig(t *testing.T) {
 				Ledger:                 ledger,
 				VerificationSequencer:  sequencer,
 				AccessController:       ac,
-				BlockVerifier:          bv,
+				ConsenterVerifier:      cv,
 				ReqInspector:           reqInspector,
 				LastConfigBlockNum:     10,
 				LastCommittedBlockHash: lastHash,
@@ -416,7 +416,7 @@ func TestVerifyProposal(t *testing.T) {
 	ac := &mocks.AccessController{}
 	ac.On("Evaluate", mock.Anything).Return(nil)
 
-	bv := &mocks.BlockVerifier{}
+	cv := &mocks.ConsenterVerifier{}
 
 	reqInspector := &smartbft.RequestInspector{
 		ValidateIdentityStructure: func(_ *msp.SerializedIdentity) error {
@@ -585,7 +585,7 @@ func TestVerifyProposal(t *testing.T) {
 				Ledger:                 ledger,
 				VerificationSequencer:  sequencer,
 				AccessController:       ac,
-				BlockVerifier:          bv,
+				ConsenterVerifier:      cv,
 				ReqInspector:           reqInspector,
 				LastConfigBlockNum:     10,
 				LastCommittedBlockHash: lastHash,
