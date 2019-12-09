@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -80,7 +79,7 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			ordererInstance.Signal(syscall.SIGTERM)
 			Eventually(ordererInstance.Wait(), network.EventuallyTimeout).Should(Receive())
 		}
-		os.RemoveAll(testDir)
+		//os.RemoveAll(testDir)
 	})
 
 	Describe("smartbft network", func() {
@@ -97,6 +96,8 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			Eventually(networkProcess.Ready(), network.EventuallyTimeout).Should(BeClosed())
 
 			assertBlockReception(map[string]int{"systemchannel": 0}, network.Orderers, peer, network)
+			By("check block validation policy on sys channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], "systemchannel", protoscommon.Policy_IMPLICIT_ORDERER)
 
 			channel := "testchannel1"
 
@@ -111,6 +112,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 				Ctor:    `{"Args":["init","a","100","b","200"]}`,
 				Policy:  `AND ('Org1MSP.member','Org2MSP.member')`,
 			})
+
+			By("check block validation policy on app channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], channel, protoscommon.Policy_IMPLICIT_ORDERER)
 
 			By("querying the chaincode")
 
@@ -164,6 +168,8 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			peer := network.Peer("Org1", "peer0")
 
 			assertBlockReception(map[string]int{"systemchannel": 0}, network.Orderers, peer, network)
+			By("check block validation policy on sys channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], "systemchannel", protoscommon.Policy_IMPLICIT_ORDERER)
 
 			By("Waiting for followers to see the leader")
 			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
@@ -186,6 +192,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			})
 
 			assertBlockReception(map[string]int{"testchannel1": 1}, network.Orderers, peer, network)
+
+			By("check block validation policy on app channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], channel, protoscommon.Policy_IMPLICIT_ORDERER)
 
 			By("Taking down a follower node")
 			ordererProcesses[3].Signal(syscall.SIGTERM)
@@ -254,6 +263,8 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			peer := network.Peer("Org1", "peer0")
 
 			assertBlockReception(map[string]int{"systemchannel": 0}, network.Orderers, peer, network)
+			By("check block validation policy on sys channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], "systemchannel", protoscommon.Policy_IMPLICIT_ORDERER)
 
 			By("Waiting for followers to see the leader")
 			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
@@ -276,6 +287,8 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			})
 
 			assertBlockReception(map[string]int{"testchannel1": 1}, network.Orderers, peer, network)
+			By("check block validation policy on app channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], channel, protoscommon.Policy_IMPLICIT_ORDERER)
 
 			By("Taking down a follower node")
 			ordererProcesses[3].Signal(syscall.SIGTERM)
@@ -319,6 +332,7 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			var ordererRunners []*ginkgomon.Runner
 			for _, orderer := range network.Orderers {
 				runner := network.OrdererRunner(orderer)
+				runner.Command.Env = append(runner.Command.Env, "FABRIC_LOGGING_SPEC=orderer.consensus.smartbft=debug:policies.ImplicitOrderer=debug")
 				ordererRunners = append(ordererRunners, runner)
 				proc := ifrit.Invoke(runner)
 				ordererProcesses = append(ordererProcesses, proc)
@@ -333,6 +347,8 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			peer := network.Peer("Org1", "peer0")
 
 			assertBlockReception(map[string]int{"systemchannel": 0}, network.Orderers, peer, network)
+			By("check block validation policy on sys channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], "systemchannel", protoscommon.Policy_IMPLICIT_ORDERER)
 
 			By("Waiting for followers to see the leader")
 			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
@@ -355,6 +371,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			})
 
 			assertBlockReception(map[string]int{"testchannel1": 1}, network.Orderers, peer, network)
+
+			By("check block validation policy on app channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], channel, protoscommon.Policy_IMPLICIT_ORDERER)
 
 			By("Transacting on testchannel1")
 			invokeQuery(network, peer, orderer, channel, 90)
@@ -430,6 +449,7 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 
 					By(fmt.Sprintf("Launching %s", orderer.Name))
 					runner := network.OrdererRunner(orderer)
+					runner.Command.Env = append(runner.Command.Env, "FABRIC_LOGGING_SPEC=orderer.consensus.smartbft=debug:policies.ImplicitOrderer=debug")
 					ordererRunners[i] = runner
 					proc := ifrit.Invoke(runner)
 					ordererProcesses[i] = proc
@@ -452,6 +472,7 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 
 			By("Launching the added orderer")
 			runner := network.OrdererRunner(orderer5)
+			runner.Command.Env = append(runner.Command.Env, "FABRIC_LOGGING_SPEC=orderer.consensus.smartbft=debug:policies.ImplicitOrderer=debug")
 			ordererRunners = append(ordererRunners, runner)
 			proc := ifrit.Invoke(runner)
 			ordererProcesses = append(ordererProcesses, proc)
@@ -472,6 +493,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 				"systemchannel": 4,
 				"testchannel1":  6,
 			}, network.Orderers, peer, network)
+
+			By("Make sure the peers get the config blocks, again")
+			waitForBlockReceptionByPeer(peer, network, "testchannel1", 6)
 
 			By("Transacting on testchannel1, again")
 			invokeQuery(network, peer, orderer, channel, 70)
@@ -516,6 +540,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			for _, channel := range []string{"systemchannel", "testchannel1"} {
 				updateConsensusState(network, peer, orderer, channel, protosorderer.ConsensusType_STATE_NORMAL)
 			}
+
+			time.Sleep(time.Second * 15)
+
 			assertBlockReception(map[string]int{
 				"systemchannel": 7,
 				"testchannel1":  12,
@@ -525,6 +552,9 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+
+			By("Make sure the peers get the config blocks, again")
+			waitForBlockReceptionByPeer(peer, network, "testchannel1", 12)
 
 			By("Transact again")
 			invokeQuery(network, peer, orderer, channel, 40)
@@ -580,6 +610,11 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			})
 
 			assertBlockReception(map[string]int{"testchannel1": 1}, network.Orderers, peer, network)
+
+			By("check block validation policy on sys channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], "systemchannel", protoscommon.Policy_IMPLICIT_ORDERER)
+			By("check block validation policy on app channel")
+			assertBlockValidationPolicy(network, peer, network.Orderers[0], channel, protoscommon.Policy_IMPLICIT_ORDERER)
 
 			By("Taking down the leader node")
 			ordererProcesses[0].Signal(syscall.SIGTERM)
@@ -706,4 +741,18 @@ func updateConsensusState(network *nwo.Network, peer *nwo.Peer, orderer *nwo.Ord
 	}
 
 	nwo.UpdateOrdererConfig(network, orderer, channel, config, updatedConfig, peer, orderer)
+}
+
+func waitForBlockReceptionByPeer(peer *nwo.Peer, network *nwo.Network, channelName string, blockSeq uint64) {
+	Eventually(func() bool {
+		blockNumFromPeer := nwo.CurrentConfigBlockNumber(network, peer, nil, channelName)
+		return blockNumFromPeer == blockSeq
+	}, network.EventuallyTimeout, time.Second).Should(BeTrue())
+}
+
+func assertBlockValidationPolicy(network *nwo.Network, peer *nwo.Peer, orderer *nwo.Orderer, channel string, policyType protoscommon.Policy_PolicyType) {
+	config := nwo.GetConfig(network, peer, orderer, channel)
+	blockValidationPolicyValue, ok := config.ChannelGroup.Groups["Orderer"].Policies["BlockValidation"]
+	Expect(ok).To(BeTrue())
+	Expect(protoscommon.Policy_PolicyType(blockValidationPolicyValue.Policy.Type)).To(Equal(policyType))
 }

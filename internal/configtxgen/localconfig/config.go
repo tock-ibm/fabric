@@ -65,6 +65,10 @@ const (
 	// the etcd/raft-based ordering service.
 	SampleDevModeEtcdRaftProfile = "SampleDevModeEtcdRaft"
 
+	// SampleDevModeSmartBFTProfile references the sample profile used for testing
+	// the SmartBFT-based ordering service.
+	SampleDevModeSmartBFTProfile = "SampleDevModeSmartBFT"
+
 	// SampleSingleMSPChannelProfile references the sample profile which
 	// includes only the sample MSP and is used to create a channel
 	SampleSingleMSPChannelProfile = "SampleSingleMSPChannel"

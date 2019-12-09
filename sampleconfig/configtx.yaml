@@ -377,13 +377,6 @@ Orderer: &OrdererDefaults
     SmartBFT:
         # The set of BFT replicas for this network.
         Consenters:
-            - Host: smartbft0.example.com
-              Port: 7050
-              ClientTLSCert: path/to/ClientTLSCert0
-              ServerTLSCert: path/to/ServerTLSCert0
-              MSPID: OrdererOrg0
-              Identity: path/to/OSN/signcert0
-              ConsenterId: 0
             - Host: smartbft1.example.com
               Port: 7050
               ClientTLSCert: path/to/ClientTLSCert1
@@ -405,6 +398,13 @@ Orderer: &OrdererDefaults
               MSPID: OrdererOrg3
               Identity: path/to/OSN/signcert3
               ConsenterId: 3
+            - Host: smartbft4.example.com
+              Port: 7050
+              ClientTLSCert: path/to/ClientTLSCert4
+              ServerTLSCert: path/to/ServerTLSCert4
+              MSPID: OrdererOrg4
+              Identity: path/to/OSN/signcert4
+              ConsenterId: 4
 
     # Organizations lists the orgs participating on the orderer side of the
     # network.
@@ -653,6 +653,19 @@ Profiles:
         <<: *ChannelDefaults
         Orderer:
             <<: *OrdererDefaults
+            Policies:
+                Readers:
+                    Type: ImplicitMeta
+                    Rule: ANY Readers
+                Writers:
+                    Type: ImplicitMeta
+                    Rule: ANY Writers
+                Admins:
+                    Type: ImplicitMeta
+                    Rule: MAJORITY Admins
+                BlockValidation:
+                    Type: ImplicitOrderer
+                    Rule: SMARTBFT
             OrdererType: smartbft
             Organizations:
                 - <<: *SampleOrg

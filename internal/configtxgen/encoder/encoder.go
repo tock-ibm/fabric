@@ -190,10 +190,16 @@ func NewOrdererGroup(conf *genesisconfig.Orderer) (*cb.ConfigGroup, error) {
 	if err := AddPolicies(ordererGroup, conf.Policies, channelconfig.AdminsPolicyKey); err != nil {
 		return nil, errors.Wrapf(err, "error adding policies to orderer group")
 	}
-	ordererGroup.Policies[BlockValidationPolicyKey] = &cb.ConfigPolicy{
-		Policy:    policies.ImplicitMetaAnyPolicy(channelconfig.WritersPolicyKey).Value(),
-		ModPolicy: channelconfig.AdminsPolicyKey,
+	if p, ok := ordererGroup.Policies[BlockValidationPolicyKey]; !ok {
+		ordererGroup.Policies[BlockValidationPolicyKey] = &cb.ConfigPolicy{
+			Policy:    policies.ImplicitMetaAnyPolicy(channelconfig.WritersPolicyKey).Value(),
+			ModPolicy: channelconfig.AdminsPolicyKey,
+		}
+		logger.Debugf("Added Key: %s, Policy: %v", BlockValidationPolicyKey, p)
+	} else {
+		logger.Debugf("Existing Key: %s, Policy: %v", BlockValidationPolicyKey, p)
 	}
+
 	addValue(ordererGroup, channelconfig.BatchSizeValue(
 		conf.BatchSize.MaxMessageCount,
 		conf.BatchSize.AbsoluteMaxBytes,
