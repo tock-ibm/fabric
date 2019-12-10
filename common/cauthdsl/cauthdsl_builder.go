@@ -160,7 +160,7 @@ func SignedByNOutOfGivenIdentities(n int32, identities [][]byte) *cb.SignaturePo
 		signedBySigPolicies[i] = SignedBy(int32(i))
 	}
 
-	// create the policy: it requires exactly 1 signature from any of the principals
+	// create the policy: it requires exactly n signature out of the principals (identities).
 	p := &cb.SignaturePolicyEnvelope{
 		Version:    0,
 		Rule:       NOutOf(n, signedBySigPolicies),

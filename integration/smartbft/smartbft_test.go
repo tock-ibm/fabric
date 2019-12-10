@@ -79,7 +79,6 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			ordererInstance.Signal(syscall.SIGTERM)
 			Eventually(ordererInstance.Wait(), network.EventuallyTimeout).Should(Receive())
 		}
-		//os.RemoveAll(testDir)
 	})
 
 	Describe("smartbft network", func() {
@@ -540,8 +539,6 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			for _, channel := range []string{"systemchannel", "testchannel1"} {
 				updateConsensusState(network, peer, orderer, channel, protosorderer.ConsensusType_STATE_NORMAL)
 			}
-
-			time.Sleep(time.Second * 15)
 
 			assertBlockReception(map[string]int{
 				"systemchannel": 7,

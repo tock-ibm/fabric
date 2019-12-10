@@ -7,7 +7,6 @@ package blocksprovider
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -366,8 +365,6 @@ func TestBlockVerificationFailure(t *testing.T) {
 	attempts := int32(0)
 
 	rcvr := func(mock *mocks.MockBlocksDeliverer) (*orderer.DeliverResponse, error) {
-		fmt.Printf(">>> Recv called %d \n", atomic.LoadInt32(&attempts))
-
 		atomic.AddInt32(&attempts, int32(1))
 
 		return &orderer.DeliverResponse{
