@@ -70,6 +70,8 @@ type BFTChain struct {
 
 	lastBlock       *common.Block
 	lastConfigBlock *common.Block
+
+	Metrics *Metrics
 }
 
 // NewChain creates new BFT Smart chain
@@ -83,6 +85,7 @@ func NewChain(
 	remoteNodes []cluster.RemoteNode,
 	id2Identities NodeIdentitiesByID,
 	support consensus.ConsenterSupport,
+	metrics *Metrics,
 ) (*BFTChain, error) {
 
 	requestInspector := &RequestInspector{
@@ -111,6 +114,10 @@ func NewChain(
 		ID2Identities:    id2Identities,
 		BlockPuller:      blockPuller,
 		Logger:           logger,
+		Metrics: &Metrics{
+			ClusterSize:          metrics.ClusterSize.With("channel", support.ChainID()),
+			CommittedBlockNumber: metrics.CommittedBlockNumber.With("channel", support.ChainID()),
+		},
 	}
 
 	c.lastBlock = LastBlockFromLedgerOrPanic(support, c.Logger)
@@ -156,6 +163,9 @@ func bftSmartConsensusBuild(
 	}
 
 	clusterSize := uint64(len(nodes))
+
+	// report cluster size
+	c.Metrics.ClusterSize.Set(float64(clusterSize))
 
 	sync := &Synchronizer{
 		BlockToDecision: c.blockToDecision,
@@ -297,6 +307,7 @@ func (c *BFTChain) Deliver(proposal types.Proposal, signatures []types.Signature
 		c.assembler.LastBlock = block
 	}()
 	c.Logger.Debugf("Delivering proposal, writing block %d to the ledger, node id %d", block.Header.Number, c.Config.SelfID)
+	c.Metrics.CommittedBlockNumber.Set(float64(block.Header.Number)) // report the committed block number
 	if protoutil.IsConfigBlock(block) {
 		defer c.updateLastConfigBlockNum(block.Header.Number)
 		defer func() {
@@ -380,6 +391,8 @@ func (c *BFTChain) Halt() {
 
 func (c *BFTChain) lastPersistedProposalAndSignatures() (*types.Proposal, []types.Signature) {
 	lastBlock := LastBlockFromLedgerOrPanic(c.support, c.Logger)
+	// initial report of the last committed block number
+	c.Metrics.CommittedBlockNumber.Set(float64(lastBlock.Header.Number))
 	decision := c.blockToDecision(lastBlock)
 	return &decision.Proposal, decision.Signatures
 }
