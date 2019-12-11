@@ -414,3 +414,34 @@ FOR_LOOP:
 	wg.Wait()
 	assert.True(t, atomic.LoadInt32(&attempts) > 0)
 }
+
+func TestBlocksProvider_computeBackoffDelay(t *testing.T) {
+	overflowPoint := uint64(0)
+	overflow := false
+	count := uint64(0)
+	delay := time.Millisecond
+	for n := uint64(0); n < 500; n++ {
+		nextDelay, nextCount := computeBackOffDelay(n)
+		assert.True(t, nextDelay >= delay)
+		assert.True(t, nextCount >= count)
+
+		if !overflow && (nextCount == count) {
+			overflow = true
+			overflowPoint = n
+			t.Logf("overflow %d %d %v", overflowPoint, nextCount, nextDelay)
+		}
+
+		if overflow && n > overflowPoint {
+			assert.Equal(t, nextDelay, delay)
+			assert.Equal(t, nextCount, n)
+		} else if n < overflowPoint {
+			assert.True(t, nextDelay > delay)
+			assert.Equal(t, nextCount, n+1)
+		}
+
+		delay = nextDelay
+		count = nextCount
+	}
+
+	assert.True(t, overflowPoint < 32, "%d < 32", overflowPoint)
+}

@@ -87,23 +87,37 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			network.GenerateConfigTree()
 			network.Bootstrap()
 
-			ordererRunner := network.NetworkGroupRunner()
-			networkProcess = ifrit.Invoke(ordererRunner)
+			var ordererRunners []*ginkgomon.Runner
+			for _, orderer := range network.Orderers {
+				runner := network.OrdererRunner(orderer)
+				runner.Command.Env = append(runner.Command.Env, "FABRIC_LOGGING_SPEC=orderer.consensus.smartbft=debug:grpc=debug")
+				ordererRunners = append(ordererRunners, runner)
+				proc := ifrit.Invoke(runner)
+				ordererProcesses = append(ordererProcesses, proc)
+				Eventually(proc.Ready(), network.EventuallyTimeout).Should(BeClosed())
+			}
 
+			peerRunner := network.PeerGroupRunner()
+			peerProcesses = ifrit.Invoke(peerRunner)
+			Eventually(peerProcesses.Ready(), network.EventuallyTimeout).Should(BeClosed())
 			peer := network.Peer("Org1", "peer0")
 
-			Eventually(networkProcess.Ready(), network.EventuallyTimeout).Should(BeClosed())
-
 			assertBlockReception(map[string]int{"systemchannel": 0}, network.Orderers, peer, network)
-			By("check block validation policy on sys channel")
+			By("check block validation policy on system channel")
 			assertBlockValidationPolicy(network, peer, network.Orderers[0], "systemchannel", protoscommon.Policy_IMPLICIT_ORDERER)
 
-			channel := "testchannel1"
+			By("Waiting for followers to see the leader")
+			Eventually(ordererRunners[1].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[2].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
+			Eventually(ordererRunners[3].Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Message from 1"))
 
+			channel := "testchannel1"
 			orderer := network.Orderers[rand.Intn(len(network.Orderers))]
-			fmt.Fprintf(GinkgoWriter, "Picking orderer %s to create channel", orderer.Name)
+			byText := fmt.Sprintf("Creating and joining %s channel, using orderer: %s", channel, orderer.Name)
+			By(byText)
 			network.CreateAndJoinChannel(orderer, channel)
 
+			By("Deploying chaincode")
 			nwo.DeployChaincode(network, channel, orderer, nwo.Chaincode{
 				Name:    "mycc",
 				Version: "0.0",
@@ -127,20 +141,31 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			Expect(sess).To(gbytes.Say("100"))
 
 			orderer = network.Orderers[rand.Intn(len(network.Orderers))]
-			fmt.Fprintf(GinkgoWriter, "Picking orderer %s to send invoke", orderer.Name)
+			byText = fmt.Sprintf("Picking orderer %s to send invoke", orderer.Name)
+			By(byText)
 			invokeQuery(network, peer, orderer, channel, 90)
 
-			By("Taking down all the nodes")
-			networkProcess.Signal(syscall.SIGTERM)
-			Eventually(networkProcess.Wait(), network.EventuallyTimeout).Should(Receive())
+			By("Taking down all the orderers")
+			for _, proc := range ordererProcesses {
+				proc.Signal(syscall.SIGTERM)
+				Eventually(proc.Wait(), network.EventuallyTimeout).Should(Receive())
+			}
 
+			ordererRunners = nil
+			ordererProcesses = nil
 			By("Bringing up all the nodes")
-			ordererRunner = network.NetworkGroupRunner()
-			networkProcess = ifrit.Invoke(ordererRunner)
-			Eventually(networkProcess.Ready(), network.EventuallyTimeout).Should(BeClosed())
+			for _, orderer := range network.Orderers {
+				runner := network.OrdererRunner(orderer)
+				runner.Command.Env = append(runner.Command.Env, "FABRIC_LOGGING_SPEC=orderer.consensus.smartbft=debug:grpc=debug")
+				ordererRunners = append(ordererRunners, runner)
+				proc := ifrit.Invoke(runner)
+				ordererProcesses = append(ordererProcesses, proc)
+				Eventually(proc.Ready(), network.EventuallyTimeout).Should(BeClosed())
+			}
 
 			orderer = network.Orderers[rand.Intn(len(network.Orderers))]
-			fmt.Fprintf(GinkgoWriter, "Picking orderer %s to invoke", orderer.Name)
+			byText = fmt.Sprintf("Picking orderer %s to send invoke", orderer.Name)
+			By(byText)
 			invokeQuery(network, peer, orderer, channel, 80)
 		})
 
@@ -539,6 +564,8 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			for _, channel := range []string{"systemchannel", "testchannel1"} {
 				updateConsensusState(network, peer, orderer, channel, protosorderer.ConsensusType_STATE_NORMAL)
 			}
+
+			time.Sleep(15 * time.Second)
 
 			assertBlockReception(map[string]int{
 				"systemchannel": 7,
