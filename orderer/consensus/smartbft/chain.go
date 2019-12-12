@@ -73,6 +73,9 @@ type BFTChain struct {
 	lastConfigBlock *common.Block
 
 	Metrics *Metrics
+
+	nodes []uint64
+	n     uint64
 }
 
 // NewChain creates new BFT Smart chain
@@ -100,6 +103,10 @@ func NewChain(
 		nodes = append(nodes, n.ID)
 	}
 	nodes = append(nodes, config.SelfID)
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i] < nodes[j]
+	})
+	n := uint64(len(nodes))
 
 	logger := flogging.MustGetLogger("orderer.consensus.smartbft.chain").With(zap.String("channel", support.ChainID()))
 
@@ -119,7 +126,10 @@ func NewChain(
 			ClusterSize:          metrics.ClusterSize.With("channel", support.ChainID()),
 			CommittedBlockNumber: metrics.CommittedBlockNumber.With("channel", support.ChainID()),
 			IsLeader:             metrics.IsLeader.With("channel", support.ChainID()),
+			LeaderID:             metrics.LeaderID.With("channel", support.ChainID()),
 		},
+		nodes: nodes,
+		n:     n,
 	}
 
 	c.lastBlock = LastBlockFromLedgerOrPanic(support, c.Logger)
@@ -327,16 +337,6 @@ func (c *BFTChain) Deliver(proposal types.Proposal, signatures []types.Signature
 }
 
 func (c *BFTChain) reportIsLeader(proposal *types.Proposal) {
-	var nodes []uint64
-	for _, n := range c.RemoteNodes {
-		nodes = append(nodes, n.ID)
-	}
-	nodes = append(nodes, c.Config.SelfID)
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i] < nodes[j]
-	})
-	n := uint64(len(nodes))
-
 	var viewNum uint64
 	if proposal.Metadata == nil { // genesis block
 		viewNum = 0
@@ -348,13 +348,16 @@ func (c *BFTChain) reportIsLeader(proposal *types.Proposal) {
 		viewNum = proposalMD.ViewId
 	}
 
-	leaderID := nodes[viewNum%n] // same calculation as done in the library
+	leaderID := c.nodes[viewNum%c.n] // same calculation as done in the library
+
+	c.Metrics.LeaderID.Set(float64(leaderID))
 
 	if leaderID == c.Config.SelfID {
 		c.Metrics.IsLeader.Set(1)
 	} else {
 		c.Metrics.IsLeader.Set(0)
 	}
+
 }
 
 func (c *BFTChain) updateLastCommittedHash(block *common.Block) {

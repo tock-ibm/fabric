@@ -33,12 +33,21 @@ var (
 		LabelNames:   []string{"channel"},
 		StatsdFormat: "%{#fqname}.%{channel}",
 	}
+	leaderIDOpts = metrics.GaugeOpts{
+		Namespace:    "consensus",
+		Subsystem:    "smartbft",
+		Name:         "leader_id",
+		Help:         "The id of the current leader according to the latest committed block.",
+		LabelNames:   []string{"channel"},
+		StatsdFormat: "%{#fqname}.%{channel}",
+	}
 )
 
 type Metrics struct {
 	ClusterSize          metrics.Gauge
 	CommittedBlockNumber metrics.Gauge
 	IsLeader             metrics.Gauge
+	LeaderID             metrics.Gauge
 }
 
 func NewMetrics(p metrics.Provider) *Metrics {
@@ -46,5 +55,6 @@ func NewMetrics(p metrics.Provider) *Metrics {
 		ClusterSize:          p.NewGauge(clusterSizeOpts),
 		CommittedBlockNumber: p.NewGauge(committedBlockNumberOpts),
 		IsLeader:             p.NewGauge(isLeaderOpts),
+		LeaderID:             p.NewGauge(leaderIDOpts),
 	}
 }
