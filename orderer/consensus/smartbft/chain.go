@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"github.com/hyperledger/fabric/common/crypto"
 	"sort"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/SmartBFT-Go/consensus/smartbftprotos"
 	"github.com/gogo/protobuf/proto"
 	"github.com/hyperledger/fabric/common/channelconfig"
+	"github.com/hyperledger/fabric/common/crypto"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/policies"
 	"github.com/hyperledger/fabric/core/policy"
