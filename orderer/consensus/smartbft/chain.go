@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"time"
 
 	smartbft "github.com/SmartBFT-Go/consensus/pkg/consensus"
@@ -70,6 +71,11 @@ type BFTChain struct {
 
 	lastBlock       *common.Block
 	lastConfigBlock *common.Block
+
+	Metrics *Metrics
+
+	nodes []uint64
+	n     uint64
 }
 
 // NewChain creates new BFT Smart chain
@@ -83,6 +89,7 @@ func NewChain(
 	remoteNodes []cluster.RemoteNode,
 	id2Identities NodeIdentitiesByID,
 	support consensus.ConsenterSupport,
+	metrics *Metrics,
 ) (*BFTChain, error) {
 
 	requestInspector := &RequestInspector{
@@ -96,6 +103,10 @@ func NewChain(
 		nodes = append(nodes, n.ID)
 	}
 	nodes = append(nodes, config.SelfID)
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i] < nodes[j]
+	})
+	n := uint64(len(nodes))
 
 	logger := flogging.MustGetLogger("orderer.consensus.smartbft.chain").With(zap.String("channel", support.ChainID()))
 
@@ -111,6 +122,14 @@ func NewChain(
 		ID2Identities:    id2Identities,
 		BlockPuller:      blockPuller,
 		Logger:           logger,
+		Metrics: &Metrics{
+			ClusterSize:          metrics.ClusterSize.With("channel", support.ChainID()),
+			CommittedBlockNumber: metrics.CommittedBlockNumber.With("channel", support.ChainID()),
+			IsLeader:             metrics.IsLeader.With("channel", support.ChainID()),
+			LeaderID:             metrics.LeaderID.With("channel", support.ChainID()),
+		},
+		nodes: nodes,
+		n:     n,
 	}
 
 	c.lastBlock = LastBlockFromLedgerOrPanic(support, c.Logger)
@@ -156,6 +175,9 @@ func bftSmartConsensusBuild(
 	}
 
 	clusterSize := uint64(len(nodes))
+
+	// report cluster size
+	c.Metrics.ClusterSize.Set(float64(clusterSize))
 
 	sync := &Synchronizer{
 		BlockToDecision: c.blockToDecision,
@@ -214,6 +236,8 @@ func bftSmartConsensusBuild(
 		consensus.LastProposal = *proposal
 		consensus.LastSignatures = signatures
 	}
+
+	c.reportIsLeader(proposal) // report the leader
 
 	return consensus
 }
@@ -297,6 +321,8 @@ func (c *BFTChain) Deliver(proposal types.Proposal, signatures []types.Signature
 		c.assembler.LastBlock = block
 	}()
 	c.Logger.Debugf("Delivering proposal, writing block %d to the ledger, node id %d", block.Header.Number, c.Config.SelfID)
+	c.Metrics.CommittedBlockNumber.Set(float64(block.Header.Number)) // report the committed block number
+	c.reportIsLeader(&proposal)                                      // report the leader
 	if protoutil.IsConfigBlock(block) {
 		defer c.updateLastConfigBlockNum(block.Header.Number)
 		defer func() {
@@ -308,6 +334,30 @@ func (c *BFTChain) Deliver(proposal types.Proposal, signatures []types.Signature
 		return
 	}
 	c.support.WriteBlock(block, nil)
+}
+
+func (c *BFTChain) reportIsLeader(proposal *types.Proposal) {
+	var viewNum uint64
+	if proposal.Metadata == nil { // genesis block
+		viewNum = 0
+	} else {
+		proposalMD := &smartbftprotos.ViewMetadata{}
+		if err := proto.Unmarshal(proposal.Metadata, proposalMD); err != nil {
+			c.Logger.Panicf("Failed unmarshaling smartbft metadata from proposal: %v", err)
+		}
+		viewNum = proposalMD.ViewId
+	}
+
+	leaderID := c.nodes[viewNum%c.n] // same calculation as done in the library
+
+	c.Metrics.LeaderID.Set(float64(leaderID))
+
+	if leaderID == c.Config.SelfID {
+		c.Metrics.IsLeader.Set(1)
+	} else {
+		c.Metrics.IsLeader.Set(0)
+	}
+
 }
 
 func (c *BFTChain) updateLastCommittedHash(block *common.Block) {
@@ -380,6 +430,8 @@ func (c *BFTChain) Halt() {
 
 func (c *BFTChain) lastPersistedProposalAndSignatures() (*types.Proposal, []types.Signature) {
 	lastBlock := LastBlockFromLedgerOrPanic(c.support, c.Logger)
+	// initial report of the last committed block number
+	c.Metrics.CommittedBlockNumber.Set(float64(lastBlock.Header.Number))
 	decision := c.blockToDecision(lastBlock)
 	return &decision.Proposal, decision.Signatures
 }

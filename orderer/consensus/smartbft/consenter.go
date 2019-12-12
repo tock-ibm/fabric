@@ -56,6 +56,7 @@ type Consenter struct {
 	WALBaseDir       string
 	ClusterDialer    *cluster.PredicateDialer
 	Conf             *localconfig.TopLevel
+	Metrics          *Metrics
 }
 
 // New creates Consenter of type smart bft
@@ -90,6 +91,7 @@ func New(
 		Chains:           r,
 		SignerSerializer: signerSerializer,
 		WALBaseDir:       walConfig.WALDir,
+		Metrics:          NewMetrics(metricsProvider),
 	}
 
 	consenter.Comm = &cluster.Comm{
@@ -197,7 +199,7 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 	}
 	c.Logger.Debugf("SmartBFT-Go config: %v", config)
 
-	chain, err := NewChain(config, path.Join(c.WALBaseDir, support.ChainID()), puller, c.Comm, c.SignerSerializer, c.GetPolicyManager(support.ChainID()), nodes, id2Identies, support)
+	chain, err := NewChain(config, path.Join(c.WALBaseDir, support.ChainID()), puller, c.Comm, c.SignerSerializer, c.GetPolicyManager(support.ChainID()), nodes, id2Identies, support, c.Metrics)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed creating a new BFTChain")
 	}
