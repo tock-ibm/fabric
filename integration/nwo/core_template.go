@@ -98,6 +98,12 @@ peer:
   localMspId: {{ (.Organization Peer.Organization).MSPID }}
   deliveryclient:
     reconnectTotalTimeThreshold: 3600s
+    bft:
+  {{- if Peer.BFTDeliveryClient }}
+      enabled: true
+  {{- else }}
+      enabled: false
+  {{- end }}
   localMspType: bccsp
   profile:
     enabled:     false

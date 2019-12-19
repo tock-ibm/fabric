@@ -94,12 +94,13 @@ type OrdererCapabilities struct {
 	V2_0 bool `yaml:"v20,omitempty"`
 }
 
-// Peer defines a peer instance, it's owning organization, and the list of
-// channels that the peer shoudl be joined to.
+// Peer defines a peer instance, it's owning organization, the list of
+// channels that the peer should be joined to, and whether it uses a BFT delivery client.
 type Peer struct {
-	Name         string         `yaml:"name,omitempty"`
-	Organization string         `yaml:"organization,omitempty"`
-	Channels     []*PeerChannel `yaml:"channels,omitempty"`
+	Name              string         `yaml:"name,omitempty"`
+	Organization      string         `yaml:"organization,omitempty"`
+	Channels          []*PeerChannel `yaml:"channels,omitempty"`
+	BFTDeliveryClient bool           `yaml:"bftdeliveryclient,omitempty"`
 }
 
 // PeerChannel names of the channel a peer should be joined to and whether or

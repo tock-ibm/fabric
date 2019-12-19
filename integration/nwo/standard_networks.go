@@ -120,6 +120,9 @@ func BasicSmartBFT() *Config {
 		Consortium:    "SampleConsortium",
 		Organizations: []string{"Org1", "Org2"},
 	}}
+	for _, peer := range config.Peers {
+		peer.BFTDeliveryClient = true
+	}
 	config.SystemChannel.Profile = "SampleDevModeSmartBFT"
 	return config
 }

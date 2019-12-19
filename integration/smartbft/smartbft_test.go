@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tedsuo/ifrit/grouper"
+
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/integration/nwo"
@@ -99,8 +101,8 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 				Eventually(proc.Ready(), network.EventuallyTimeout).Should(BeClosed())
 			}
 
-			peerRunner := network.PeerGroupRunner()
-			peerProcesses = ifrit.Invoke(peerRunner)
+			peerGroupRunner, peerRunners := peerGroupRunners(network)
+			peerProcesses = ifrit.Invoke(peerGroupRunner)
 			Eventually(peerProcesses.Ready(), network.EventuallyTimeout).Should(BeClosed())
 			peer := network.Peer("Org1", "peer0")
 
@@ -130,8 +132,12 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			By("check block validation policy on app channel")
 			assertBlockValidationPolicy(network, peer, network.Orderers[0], channel, common.Policy_IMPLICIT_ORDERER)
 
-			By("querying the chaincode")
+			By("check peers are using the BFT delivery client")
+			for _, peerRunner := range peerRunners {
+				Eventually(peerRunner.Err(), network.EventuallyTimeout, time.Second).Should(gbytes.Say("Created BFT Delivery Client"))
+			}
 
+			By("querying the chaincode")
 			sess, err := network.PeerUserSession(peer, "User1", commands.ChaincodeQuery{
 				ChannelID: channel,
 				Name:      "mycc",
@@ -649,12 +655,13 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 			Eventually(ordererProcesses[0].Wait(), network.EventuallyTimeout).Should(Receive())
 
 			By("Submitting a request all followers to force a view change")
-			for _, orderer := range []*nwo.Orderer{network.Orderers[1], network.Orderers[2], network.Orderers[3]} {
+			for i, orderer := range []*nwo.Orderer{network.Orderers[1], network.Orderers[2], network.Orderers[3]} {
+				invokeStr := fmt.Sprintf(`{"Args":["issue","x%d","100"]}`, i)
 				sess, err := network.PeerUserSession(peer, "User1", commands.ChaincodeInvoke{
 					ChannelID: channel,
 					Orderer:   network.OrdererAddress(orderer, nwo.ListenPort),
 					Name:      "mycc",
-					Ctor:      `{"Args":["invoke","a","b","10"]}`,
+					Ctor:      invokeStr,
 					PeerAddresses: []string{
 						network.PeerAddress(network.Peer("Org1", "peer0"), nwo.ListenPort),
 						network.PeerAddress(network.Peer("Org2", "peer1"), nwo.ListenPort),
@@ -665,11 +672,13 @@ var _ = Describe("EndToEnd Smart BFT configuration test", func() {
 				Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
 			}
 
-			By("Waiting for circulating transaction to be re-proposed")
-			assertBlockReception(map[string]int{"testchannel1": 2}, network.Orderers[1:], peer, network)
+			By("Waiting for circulating transactions to be re-proposed")
+			for i := 0; i < 3; i++ {
+				queryExpect(network, peer, channel, fmt.Sprintf("x%d", i), 100)
+			}
 
 			By("Submitting transaction to the new leader")
-			invokeQuery(network, peer, network.Orderers[1], channel, 80)
+			invokeQuery(network, peer, network.Orderers[1], channel, 90)
 		})
 	})
 })
@@ -690,14 +699,27 @@ func invokeQuery(network *nwo.Network, peer *nwo.Peer, orderer *nwo.Orderer, cha
 	Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
 	Expect(sess.Err).To(gbytes.Say("Chaincode invoke successful. result: status:200"))
 
-	sess, err = network.PeerUserSession(peer, "User1", commands.ChaincodeQuery{
-		ChannelID: channel,
-		Name:      "mycc",
-		Ctor:      `{"Args":["query","a"]}`,
-	})
-	Expect(err).NotTo(HaveOccurred())
-	Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
-	Expect(sess).To(gbytes.Say(fmt.Sprintf("%d", expectedBalance)))
+	queryExpect(network, peer, channel, "a", expectedBalance)
+}
+
+func queryExpect(network *nwo.Network, peer *nwo.Peer, channel string, key string, expectedBalance int) {
+	Eventually(func() string {
+		sess, err := network.PeerUserSession(peer, "User1", commands.ChaincodeQuery{
+			ChannelID: channel,
+			Name:      "mycc",
+			Ctor:      fmt.Sprintf(`{"Args":["query","%s"]}`, key),
+		})
+		Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit())
+		if sess.ExitCode() != 0 {
+			return fmt.Sprintf("exit code is %d: %s, %v", sess.ExitCode(), string(sess.Err.Contents()), err)
+		}
+
+		outStr := strings.TrimSpace(string(sess.Out.Contents()))
+		if outStr != fmt.Sprintf("%d", expectedBalance) {
+			return fmt.Sprintf("Error: expected: %d, received %s", expectedBalance, outStr)
+		}
+		return ""
+	}, network.EventuallyTimeout, time.Second).Should(BeEmpty())
 }
 
 // assertBlockReception asserts that the given orderers have expected heights for the given channel--> height mapping
@@ -788,4 +810,15 @@ func assertBlockValidationPolicy(network *nwo.Network, peer *nwo.Peer, orderer *
 func by(text string, callbacks ...func()) {
 	fmt.Println(text)
 	By(text, callbacks...)
+}
+
+func peerGroupRunners(n *nwo.Network) (ifrit.Runner, []*ginkgomon.Runner) {
+	runners := []*ginkgomon.Runner{}
+	members := grouper.Members{}
+	for _, p := range n.Peers {
+		runner := n.PeerRunner(p)
+		members = append(members, grouper.Member{Name: p.ID(), Runner: runner})
+		runners = append(runners, runner)
+	}
+	return grouper.NewParallel(syscall.SIGTERM, members), runners
 }
