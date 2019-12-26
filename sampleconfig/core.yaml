@@ -341,7 +341,7 @@ peer:
         # Config parameters for the Byzantine Fault Tolerant (BFT) client implementation
         bft:
             # Whether to use a BFT client implementation
-            enabled: false
+            enabled: true
 
             # The minimal back-off delay. The minimal time between connection retries. This interval grows
             # exponentially until maxBackoffDelay, below.
