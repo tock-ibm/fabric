@@ -248,16 +248,15 @@ func (d *deliverServiceImpl) StartDeliverForChannel(chainID string, ledgerInfo b
 		logger.Errorf(errMsg)
 		return errors.New(errMsg)
 	} else {
+		logger.Info("This peer will retrieve blocks from ordering service and disseminate to other peers in the organization for channel", chainID)
 		if !isBFTClientEnabled() {
 			client := d.newClient(chainID, ledgerInfo)
-			logger.Info("This peer will retrieve blocks from ordering service and disseminate to other peers in the organization for channel", chainID)
 			d.deliverClients[chainID] = &deliverClient{
 				bp:      blocksprovider.NewBlocksProvider(chainID, client, d.conf.Gossip, d.conf.CryptoSvc),
 				bclient: client,
 			}
 		} else {
 			bftClient := d.newBFTClient(chainID, ledgerInfo, d.conf.CryptoSvc)
-			logger.Info("This peer will retrieve blocks from ordering service and disseminate to other peers in the organization for channel", chainID)
 			d.deliverClients[chainID] = &deliverClient{
 				bp:      blocksprovider.NewBlocksProvider(chainID, bftClient, d.conf.Gossip, d.conf.CryptoSvc),
 				bclient: bftClient,
