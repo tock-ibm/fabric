@@ -438,8 +438,114 @@ func (r *Registrar) JoinChannel(channelID string, configBlock *cb.Block) (types.
 		return types.ChannelInfo{}, types.ErrChannelAlreadyExists
 	}
 
+	isAppChan, isMember, err := r.validateJoinBlock(channelID, configBlock)
+	if err != nil {
+		return types.ChannelInfo{}, err
+	}
+
+	if !isAppChan && len(r.chains) > 0 {
+		return types.ChannelInfo{}, types.ErrAppChannelsAlreadyExists
+	}
+
+	if !isAppChan {
+		return r.joinSystemChannel(channelID, configBlock)
+	}
+
+	if !isMember {
+		return r.joinAppChannelFollower(channelID, configBlock)
+	}
+
+	return r.joinAppChannelMember(channelID, configBlock)
+}
+
+func (r *Registrar) validateJoinBlock(channelID string, configBlock *cb.Block) (isAppChannel bool, isMember bool, err error) {
+	//TODO validate and classify the join block
+	// unmarshal block, check it is a config block
+	// check that the Channel-ID in the block is same as argument channelID
+	// try to build a new bundle...
+	// look for consortiums group - classify as system or app.
+	// inspect orderer config, extract consensus type. If not etcdraft, return error
+	// check the etcdraft metadata, discover if this node is in the consenters set (member or follwer)
+	// if App-channel, check that Application group exists...
+
+	isAppChannel = true
+
+	consensusType := "etcdraft"
+	consenter, ok := r.consenters[consensusType]
+	if !ok {
+		return false, false, errors.Errorf("cannot find consenter of type %s", consensusType)
+	}
+	joinValidator, ok := consenter.(consensus.JoinBlockValidator)
+	if !ok {
+		return false, false, errors.Errorf("consenter is not a JoinBlockValidator")
+	}
+
+	isMember, err = joinValidator.ValidateJoinBlock(channelID, configBlock)
+
+	return isAppChannel, isMember, err
+}
+
+func (r *Registrar) joinSystemChannel(channelID string, configBlock *cb.Block) (types.ChannelInfo, error) {
 	//TODO
-	return types.ChannelInfo{}, errors.New("Not implemented yet")
+	return types.ChannelInfo{}, errors.New("not implemented yet")
+}
+
+func (r *Registrar) joinAppChannelFollower(channelID string, configBlock *cb.Block) (info types.ChannelInfo, err error) {
+	//TODO
+	return types.ChannelInfo{}, errors.New("not implemented yet")
+}
+
+// called under lock
+func (r *Registrar) joinAppChannelMember(channelID string, configBlock *cb.Block) (info types.ChannelInfo, err error) {
+	// Because newLedgerResources & newChainSupport may panic, we have to recover.
+	// Validating the join block should prevent this, but just in case we missed something, we don't want to bring down
+	// the ordrer because of an external request.
+	defer func() {
+		if r := recover(); r != nil {
+			info = types.ChannelInfo{}
+			err = errors.Errorf("failed to join as member: recover: %s", fmt.Sprintf("%v", r))
+		}
+	}()
+
+	configEnv, err := protoutil.ExtractEnvelope(configBlock, 0)
+	if err != nil {
+		return types.ChannelInfo{}, errors.Wrap(err, "failed to join as member")
+	}
+
+	if configBlock.Header.Number > 0 {
+		//TODO just for now, will be changed later once the onboarding code is in place
+		return types.ChannelInfo{}, errors.New("not implemented yet: join member with on-boarding")
+	}
+
+	//TODO save the join-block in the file repo to make this action crash tolerant.
+
+	//recover panic
+	ledgerResources := r.newLedgerResources(configEnv)
+	// If we have no blocks, and we join with the genesis block, we can create the genesis block ourselves.
+	if ledgerResources.Height() == 0 && configBlock.Header.Number == 0 {
+		ledgerResources.Append(blockledger.CreateNextBlock(ledgerResources, []*cb.Envelope{configEnv}))
+	}
+
+	//recover panic
+	cs := newChainSupport(r, ledgerResources, r.consenters, r.signer, r.blockcutterMetrics, r.bccsp)
+	chainID := ledgerResources.ConfigtxValidator().ChannelID()
+	if channelID != chainID {
+		return types.ChannelInfo{}, errors.Errorf("Channel ID in block '%s' is different than argument '%s'", chainID, channelID)
+	}
+
+	info = types.ChannelInfo{
+		Name:   chainID,
+		URL:    "",
+		Height: ledgerResources.Height(),
+	}
+	info.ClusterRelation, info.Status = cs.StatusReport()
+
+	logger.Infof("Created and starting new channel %s", chainID)
+
+	r.chains[chainID] = cs
+	cs.start()
+
+	return info, nil
 }
 
 func (r *Registrar) RemoveChannel(channelID string, removeStorage bool) error {

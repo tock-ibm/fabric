@@ -37,6 +37,11 @@ type MetadataValidator interface {
 	ValidateConsensusMetadata(oldMetadata, newMetadata []byte, newChannel bool) error
 }
 
+//TODO document
+type JoinBlockValidator interface {
+	ValidateJoinBlock(channelID string, configBlock *cb.Block) (isClusterMember bool, err error)
+}
+
 // Chain defines a way to inject messages for ordering.
 // Note, that in order to allow flexibility in the implementation, it is the responsibility of the implementer
 // to take the ordered messages, send them through the blockcutter.Receiver supplied via HandleChain to cut blocks,

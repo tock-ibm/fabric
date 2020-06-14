@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package multichannel
 
 import (
+	"errors"
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/types"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/capabilities"
@@ -19,12 +19,14 @@ import (
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	"github.com/hyperledger/fabric/orderer/common/blockcutter"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
+	"github.com/hyperledger/fabric/orderer/common/types"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/protoutil"
 )
 
 type mockConsenter struct {
-	cluster bool
+	cluster       bool
+	clusterMember bool
 }
 
 func (mc *mockConsenter) HandleChain(support consensus.ConsenterSupport, metadata *cb.Metadata) (consensus.Chain, error) {
@@ -43,6 +45,13 @@ func (mc *mockConsenter) HandleChain(support consensus.ConsenterSupport, metadat
 	}
 
 	return chain, nil
+}
+
+func (mc *mockConsenter) ValidateJoinBlock(channelID string, configBlock *cb.Block) (isClusterMember bool, err error) {
+	if !mc.cluster {
+		return false, errors.New("not a cluster consenter")
+	}
+	return mc.clusterMember, nil
 }
 
 type mockChainCluster struct {

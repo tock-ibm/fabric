@@ -320,3 +320,8 @@ func createComm(clusterDialer *cluster.PredicateDialer, c *Consenter, config loc
 	c.Communication = comm
 	return comm
 }
+
+func (c *Consenter) ValidateJoinBlock(channelID string, configBlock *common.Block) (isClusterMember bool, err error) {
+	// TODO
+	return true, nil
+}
