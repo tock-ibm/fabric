@@ -177,6 +177,8 @@ func DERtoPEM(der []byte) string {
 	}))
 }
 
+var dialerLogger *flogging.FabricLogger = flogging.MustGetLogger("orderer.common.cluster.dialer")
+
 // StandardDialer wraps an ClientConfig, and provides
 // a means to connect according to given EndpointCriteria.
 type StandardDialer struct {
@@ -185,15 +187,23 @@ type StandardDialer struct {
 
 // Dial dials an address according to the given EndpointCriteria
 func (dialer *StandardDialer) Dial(endpointCriteria EndpointCriteria) (*grpc.ClientConn, error) {
+	dialerLogger.Debugf("Entry: %s", endpointCriteria)
 	cfg := dialer.Config.Clone()
 	cfg.SecOpts.ServerRootCAs = endpointCriteria.TLSRootCAs
 
+	dialerLogger.Debugf("ep: %s, cfg: %v", endpointCriteria.Endpoint, cfg.Timeout)
+
 	client, err := comm.NewGRPCClient(cfg)
 	if err != nil {
+		dialerLogger.Debugf("Exit: %v", err)
 		return nil, errors.Wrap(err, "failed creating gRPC client")
 	}
 
-	return client.NewConnection(endpointCriteria.Endpoint)
+	dialerLogger.Debugf("ep: %s, client: %v", endpointCriteria.Endpoint, client)
+
+	conn, err := client.NewConnection(endpointCriteria.Endpoint)
+	dialerLogger.Debugf("Exit: %s, %v, %v", endpointCriteria.Endpoint, conn, err)
+	return conn, err
 }
 
 //go:generate mockery -dir . -name BlockVerifier -case underscore -output ./mocks/

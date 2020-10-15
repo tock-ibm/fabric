@@ -991,7 +991,7 @@ func TestVerifierLoader(t *testing.T) {
 		onFailureInvoked          bool
 		expectedPanic             string
 		expectedLoggedMessages    map[string]struct{}
-		expectedResult            verifiersByChannel
+		expectedResult            verifiersByChannelMap
 	}{
 		{
 			description:          "obtaining ledger fails",
@@ -1003,7 +1003,7 @@ func TestVerifierLoader(t *testing.T) {
 			expectedLoggedMessages: map[string]struct{}{
 				"Channel mychannel has no blocks, skipping it": {},
 			},
-			expectedResult: make(verifiersByChannel),
+			expectedResult: make(verifiersByChannelMap),
 		},
 		{
 			description:   "block retrieval fails",
@@ -1059,7 +1059,7 @@ func TestVerifierLoader(t *testing.T) {
 			expectedLoggedMessages: map[string]struct{}{
 				"Loaded verifier for channel mychannel from config block at index 99": {},
 			},
-			expectedResult: verifiersByChannel{
+			expectedResult: verifiersByChannelMap{
 				"mychannel": verifier,
 			},
 		},

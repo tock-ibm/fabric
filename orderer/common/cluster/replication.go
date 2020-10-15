@@ -162,8 +162,12 @@ func (r *Replicator) ReplicateChains() []string {
 	}
 
 	// Last, pull the system chain.
-	if err := r.PullChannel(r.SystemChannel); err != nil && err != ErrSkipped {
-		r.Logger.Panicf("Failed pulling system channel: %v", err)
+	r.Logger.Infof("Going to pull the system channel: %s", r.SystemChannel)
+	if err := r.PullChannel(r.SystemChannel); err != nil {
+		if err != ErrSkipped {
+			r.Logger.Panicf("Failed pulling system channel: %v", err)
+		}
+		r.Logger.Warnf("Failed pulling system channel: %v", err)
 	}
 	return replicatedChains
 }
@@ -209,6 +213,7 @@ func (r *Replicator) PullChannel(channel string) error {
 }
 
 func (r *Replicator) pullChannelBlocks(channel string, puller *BlockPuller, latestHeight uint64, ledger LedgerWriter) error {
+	r.Logger.Infof("pulling channel %s, latest height %d", channel, latestHeight)
 	nextBlockToPull := ledger.Height()
 	if nextBlockToPull == latestHeight {
 		r.Logger.Infof("Latest height found (%d) is equal to our height, skipping pulling channel %s", latestHeight, channel)

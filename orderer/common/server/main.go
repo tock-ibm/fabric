@@ -419,11 +419,9 @@ func extractSystemChannel(lf blockledger.Factory, bccsp bccsp.BCCSP) *cb.Block {
 			logger.Panicf("Failed getting channel %v's ledger: %v", cID, err)
 		}
 		if channelLedger.Height() == 0 {
-			// when restarting orderer after using channel participation to join
-			// the system channel with a config block, skip this step since we need
-			// the registrar to use the joinBlock from the filerepo instead
-			return nil
+			continue // There may be empty ledgers with join-blocks, skip those
 		}
+		
 		channelConfigBlock := multichannel.ConfigBlockOrPanic(channelLedger)
 
 		err = onboarding.ValidateBootstrapBlock(channelConfigBlock, bccsp)

@@ -354,10 +354,10 @@ type verifierLoader struct {
 	onFailure       func(block *common.Block)
 }
 
-type verifiersByChannel map[string]cluster.BlockVerifier
+type verifiersByChannelMap map[string]cluster.BlockVerifier
 
-func (vl *verifierLoader) loadVerifiers() verifiersByChannel {
-	res := make(verifiersByChannel)
+func (vl *verifierLoader) loadVerifiers() verifiersByChannelMap {
+	res := make(verifiersByChannelMap)
 
 	for _, channel := range vl.ledgerFactory.ChannelIDs() {
 		v := vl.loadVerifier(channel)

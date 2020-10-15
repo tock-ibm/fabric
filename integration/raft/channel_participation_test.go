@@ -654,7 +654,7 @@ var _ = Describe("ChannelParticipation", func() {
 			Eventually(ordererProcesses[index].Wait(), network.EventuallyTimeout).Should(Receive(MatchError("exit status 137")))
 			ordererRunner := network.OrdererRunner(o)
 			ordererProcess := ifrit.Invoke(ordererRunner)
-			Eventually(ordererProcess.Ready(), network.EventuallyTimeout).Should(BeClosed())
+			Eventually(ordererProcess.Ready(), 2*network.EventuallyTimeout).Should(BeClosed())
 			ordererProcesses[index] = ordererProcess
 			ordererRunners[index] = ordererRunner
 		}

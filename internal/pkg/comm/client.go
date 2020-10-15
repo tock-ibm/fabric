@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"github.com/hyperledger/fabric/common/flogging"
 	"time"
 
 	"github.com/pkg/errors"
@@ -172,6 +173,8 @@ func CertPoolOverride(pool *x509.CertPool) TLSOption {
 	}
 }
 
+var clientLogger *flogging.FabricLogger = flogging.MustGetLogger("comm.client")
+
 // NewConnection returns a grpc.ClientConn for the target address and
 // overrides the server name used to verify the hostname on the
 // certificate returned by a server when using TLS
@@ -202,8 +205,16 @@ func (client *GRPCClient) NewConnection(address string, tlsOptions ...TLSOption)
 
 	ctx, cancel := context.WithTimeout(context.Background(), client.timeout)
 	defer cancel()
+	clientLogger.Debugf("before DialContext: address: %s", address)
 	conn, err := grpc.DialContext(ctx, address, dialOpts...)
 	if err != nil {
+		clientLogger.Debugf("failed DialContext: address: %s, error: %s", address, err)
+		if conn != nil {
+			clientLogger.Debugf("failed DialContext: address: %s, closing connection", address)
+			if err = conn.Close(); err != nil {
+				clientLogger.Debugf("failed DialContext: address: %s, failed closing connection: %s", address, err)
+			}
+		}
 		return nil, errors.WithMessage(errors.WithStack(err),
 			"failed to create new connection")
 	}
